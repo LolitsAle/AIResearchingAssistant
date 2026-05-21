@@ -1,38 +1,33 @@
 function formatScore(score) {
   if (typeof score !== 'number' || Number.isNaN(score)) return null
-  const normalized = score <= 1 ? score * 100 : score
-  return `${Math.round(normalized)}%`
+  return `${Math.round(score * 100)}%`
 }
 
 export default function SourceCard({ source }) {
   if (!source) return null
 
-  const title = source.title || source.source_name || `Nguồn #${source.chunk_id || 'không rõ'}`
+  const title = source.title || `Chunk ${source.chunk_id || ''}`.trim() || 'Nguồn không rõ tên'
   const url = source.url || source.link
-  const snippet = source.snippet || source.summary || source.content
-  const publishedAt = source.published_at || source.date
-  const page = source.page
-  const scoreText = formatScore(source.score || source.relevance)
+  const snippet = source.content || source.snippet || source.summary || 'Không có nội dung trích dẫn.'
+  const pageText = typeof source.page === 'number' ? `Trang ${source.page}` : 'Không rõ trang'
+  const scoreText = formatScore(source.score)
 
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 10, marginBottom: 8 }}>
-      <div style={{ marginBottom: 6 }}>
+    <article style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10, marginTop: 10 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>
         {url ? (
-          <a href={url} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>
+          <a href={url} target="_blank" rel="noreferrer">
             {title}
           </a>
         ) : (
-          <span style={{ fontWeight: 600 }}>{title}</span>
+          <span>{title}</span>
         )}
       </div>
-
-      <small>
-        {typeof page === 'number' ? `Trang ${page}` : 'Không rõ trang'}
+      <small style={{ color: '#64748b' }}>
+        {pageText}
         {scoreText ? ` · Độ liên quan: ${scoreText}` : ''}
-        {publishedAt ? ` · ${publishedAt}` : ''}
       </small>
-
-      {snippet && <p style={{ fontSize: 13, marginTop: 6, whiteSpace: 'pre-wrap' }}>{snippet}</p>}
-    </div>
+      <p style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{snippet}</p>
+    </article>
   )
 }

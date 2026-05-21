@@ -1,9 +1,23 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
 from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-# ── Document ──────────────────────────────────────────────
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    success: bool = False
+    error: ErrorDetail
+
+
+class SuccessEnvelope(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
 
 class DocumentResponse(BaseModel):
     doc_id: str
@@ -24,17 +38,29 @@ class DeleteDocumentResponse(BaseModel):
     deleted: bool
 
 
-# ── Chat ──────────────────────────────────────────────────
-
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str
+    content: str = Field(min_length=1)
 
 
 class AskRequest(BaseModel):
-    doc_id: str
-    question: str = Field(..., max_length=1000)
-    chat_history: List[ChatMessage] = Field(default_factory=list, max_length=20)
+    doc_id: str = Field(min_length=1)
+    question: str = Field(min_length=1, max_length=1000)
+    chat_history: List[ChatMessage] = Field(default_factory=list)
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("question không được để trống")
+        return trimmed
+
+    @model_validator(mode="after")
+    def validate_history_limit(self):
+        if len(self.chat_history) > 20:
+            raise ValueError("chat_history tối đa 20 messages")
+        return self
 
 
 class SourceChunk(BaseModel):
@@ -50,26 +76,7 @@ class AskResponse(BaseModel):
     tokens_used: Optional[int] = None
 
 
-# ── Summary ───────────────────────────────────────────────
-
 class SummaryResponse(BaseModel):
     summary: str
     key_contributions: List[str]
     doc_id: str
-
-
-# ── Generic wrapper ───────────────────────────────────────
-
-class SuccessResponse(BaseModel):
-    success: bool = True
-    data: dict
-
-
-class ErrorDetail(BaseModel):
-    code: str
-    message: str
-
-
-class ErrorResponse(BaseModel):
-    success: bool = False
-    error: ErrorDetail
