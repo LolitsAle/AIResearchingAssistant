@@ -1,61 +1,57 @@
-# 🔬 AI Research Assistant
+# AI Researching Assistant (Local Ollama)
+A full-stack AI research copilot to upload academic PDFs, index content, run grounded Q&A, summarize papers, explain terms, and compare multiple papers.
 
-Hệ thống hỗ trợ đọc và phân tích tài liệu học thuật sử dụng RAG (Retrieval-Augmented Generation).
+## Features
+- PDF upload + parsing (PyMuPDF)
+- Section-aware chunking
+- RAG Q&A with citations
+- Structured summary extraction
+- Term explanation
+- Multi-paper comparison
+- Chat history persistence
 
-## 🏗️ Kiến trúc hệ thống
+## Tech stack
+- Frontend: React + Vite
+- Backend: FastAPI + SQLAlchemy + SQLite
+- LLM: Ollama local (`llama3.1`)
+- Retrieval: TF-IDF cosine similarity (scikit-learn)
 
-```
-PDF Upload ──► FastAPI ──► Parse & Chunk ──► Gemini Embedding ──► Supabase (pgvector)
-                                                                         │
-User Question ──► FastAPI ──► Gemini Embedding ──► Vector Search ────────┘
-                                                         │
-                                              Top-k Chunks + Prompt
-                                                         │
-                                                  Gemini Flash ──► Answer + Sources
-```
+## Prerequisites
+- Python 3.11+
+- Node.js 18+
+- Ollama
 
-## 📁 Cấu trúc dự án
-
-```
-AIResearchingAssistant/
-├── backend/          # FastAPI backend
-├── frontend/         # React frontend
-└── docs/             # Tài liệu, API contract
-```
-
-
-## 🚀 Tech Stack
-
-| Layer | Công cụ |
-|-------|---------|
-| Backend | FastAPI + Python |
-| Frontend | React + Vite |
-| PDF Parse | pdfplumber |
-| Embedding | Google text-embedding-004 |
-| Vector DB | Supabase + pgvector |
-| LLM | Gemini 1.5 Flash |
-| Deploy BE | Render |
-| Deploy FE | Vercel |
-
-## 📋 Tài liệu
-
-- [API Contract](./docs/api_contract.md)
-- [Architecture](./docs/architecture.md)
-- [Backend README](./backend/README.md)
-- [Frontend README](./frontend/README.md)
-
-## ⚙️ Setup nhanh
-
+## Ollama setup
 ```bash
-# Backend
-cd backend
-cp .env.example .env   # Điền API keys
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+ollama pull llama3.1
+ollama pull nomic-embed-text
+ollama serve
+```
 
-# Frontend
+## Backend setup
+```bash
+cd backend
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+uvicorn app.main:app --reload --port 8000
+```
+
+## Frontend setup
+```bash
 cd frontend
-cp .env.example .env   # Điền VITE_API_URL
 npm install
+copy .env.example .env
 npm run dev
 ```
+
+## API docs
+- http://localhost:8000/docs
+
+## Troubleshooting
+- Ollama not running: start `ollama serve`.
+- Model not pulled: run `ollama pull llama3.1`.
+- Scanned PDF: OCR not supported yet.
+- CORS: verify `CORS_ORIGINS` matches frontend URL.
