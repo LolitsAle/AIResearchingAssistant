@@ -1,27 +1,83 @@
-# API Contract
+# API Contract - AI Researching Assistant
+
 Base URL: `http://localhost:8000/api`
 
 ## Error format
 ```json
-{"error":{"code":"STRING_CODE","message":"Human readable message","details":{}}}
+{ "error": { "message": "human readable" } }
 ```
 
 ## Endpoints
-- `GET /health`
-- `POST /papers/upload`
-- `GET /papers`
-- `GET /papers/{paper_id}`
-- `DELETE /papers/{paper_id}`
-- `POST /papers/{paper_id}/summarize`
-- `POST /papers/{paper_id}/ask`
-- `POST /papers/{paper_id}/terms/explain`
-- `POST /papers/compare`
-- `GET /papers/{paper_id}/chat`
+### GET /health
+Response:
+```json
+{ "status": "ok", "ollama": "available" }
+```
 
-## Key Models
-- Paper: id,title,filename,file_path,page_count,chunk_count,status,created_at,updated_at
-- PaperChunk: id,paper_id,section,page_start,page_end,content,chunk_index,embedding_json,created_at
-- PaperSummary: id,paper_id,short_summary,detailed_summary,research_problem,methodology,main_contributions_json,key_ideas_json,results_json,limitations_json
-- ChatMessage: id,paper_id,role,content,citations_json,created_at
+### POST /papers/upload
+Multipart form-data: `file` (PDF).
+Response:
+```json
+{ "paper": { "id":"...", "title":"...", "filename":"...", "status":"indexed", "page_count":10, "chunk_count":35, "created_at":"..." } }
+```
 
-See `/docs` swagger for full live schema and examples.
+### GET /papers
+```json
+{ "papers": [Paper] }
+```
+
+### GET /papers/{paper_id}
+```json
+{ "paper": Paper, "summary": Summary | null }
+```
+
+### DELETE /papers/{paper_id}
+```json
+{ "deleted": true }
+```
+
+### POST /papers/{paper_id}/summarize
+Response:
+```json
+{ "paper_id":"...", "summary": { "short_summary":"...", "detailed_summary":"...", "research_problem":"...", "methodology":"...", "main_contributions":[], "key_ideas":[], "results":[], "limitations":[] } }
+```
+
+### POST /papers/{paper_id}/ask
+Request:
+```json
+{ "question": "..." }
+```
+Response:
+```json
+{ "answer":"...", "citations":[{ "chunk_id":"...", "paper_id":"...", "section":"...", "page_start":1, "page_end":1, "snippet":"...", "score":0.91 }] }
+```
+
+### POST /papers/{paper_id}/terms/explain
+Request:
+```json
+{ "term":"Transformer" }
+```
+Response:
+```json
+{ "term":"Transformer", "explanation":"...", "citations":[] }
+```
+
+### POST /papers/compare
+Request:
+```json
+{ "paper_ids": ["id1", "id2"] }
+```
+Response:
+```json
+{ "comparison": { "overview":"...", "papers":[{"paper_id":"id1","title":"..."}], "comparison_table":[], "conclusion":"..." } }
+```
+
+### GET /papers/{paper_id}/chat
+```json
+{ "messages":[{ "id":"...", "role":"user", "content":"...", "citations":[], "created_at":"..." }] }
+```
+
+## Main data models
+- Paper: id, title, filename, status, page_count, chunk_count, created_at
+- Citation: chunk_id, paper_id, section, page_start, page_end, snippet, score
+- Summary: structured academic summary fields listed above.

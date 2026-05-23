@@ -1,16 +1,24 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
 
 async function request(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, options);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.detail || data?.error?.message || 'Request failed');
-  return data;
+  let res
+  try {
+    res = await fetch(`${API_BASE}${path}`, options)
+  } catch {
+    throw new Error('Backend is not reachable. Please start FastAPI server.')
+  }
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error?.message || data?.detail || 'Request failed')
+  return data
 }
 
 export const api = {
   health: () => request('/health'),
-  uploadPaper: (file) => { const fd = new FormData(); fd.append('file', file); return request('/papers/upload',{method:'POST',body:fd});},
   listPapers: () => request('/papers'),
+  uploadPaper: (file) => {
+    const fd = new FormData(); fd.append('file', file)
+    return request('/papers/upload', { method: 'POST', body: fd })
+  },
   getPaper: (id) => request(`/papers/${id}`),
   deletePaper: (id) => request(`/papers/${id}`, { method: 'DELETE' }),
   summarize: (id) => request(`/papers/${id}/summarize`, { method: 'POST' }),
@@ -18,4 +26,4 @@ export const api = {
   explainTerm: (id, term) => request(`/papers/${id}/terms/explain`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }),
   compare: (paper_ids) => request('/papers/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paper_ids }) }),
   chat: (id) => request(`/papers/${id}/chat`),
-};
+}

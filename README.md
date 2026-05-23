@@ -1,25 +1,26 @@
-# AI Researching Assistant (Local Ollama)
-A full-stack AI research copilot to upload academic PDFs, index content, run grounded Q&A, summarize papers, explain terms, and compare multiple papers.
+# AI Researching Assistant (React + FastAPI + Ollama)
+
+## Overview
+Local-first AI Research Assistant for uploading academic PDFs, generating structured summaries, Q&A with citations, term explanation, and multi-paper comparison.
 
 ## Features
-- PDF upload + parsing (PyMuPDF)
-- Section-aware chunking
+- Upload PDF papers
+- Parse and chunk documents
+- Generate structured summary
 - RAG Q&A with citations
-- Structured summary extraction
-- Term explanation
-- Multi-paper comparison
-- Chat history persistence
+- Explain academic terms
+- Compare multiple papers
 
-## Tech stack
+## Tech Stack
 - Frontend: React + Vite
 - Backend: FastAPI + SQLAlchemy + SQLite
 - LLM: Ollama local (`llama3.1`)
-- Retrieval: TF-IDF cosine similarity (scikit-learn)
+- Retrieval: TF-IDF cosine similarity
 
 ## Prerequisites
 - Python 3.11+
 - Node.js 18+
-- Ollama
+- Ollama installed
 
 ## Ollama setup
 ```bash
@@ -48,10 +49,10 @@ npm run dev
 ```
 
 ## API docs
-- http://localhost:8000/docs
+- Swagger: http://localhost:8000/docs
 
 ## Troubleshooting
-- Ollama not running: start `ollama serve`.
-- Model not pulled: run `ollama pull llama3.1`.
-- Scanned PDF: OCR not supported yet.
-- CORS: verify `CORS_ORIGINS` matches frontend URL.
+- **Ollama not running**: start `ollama serve`.
+- **Model not found**: run `ollama pull llama3.1`.
+- **Scanned PDF**: OCR is not supported yet.
+- **CORS error**: check `CORS_ORIGINS` in backend `.env`.

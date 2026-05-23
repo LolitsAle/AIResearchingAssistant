@@ -1,8 +1,9 @@
 from fastapi import APIRouter
-from app.services.ollama_service import health_check
+from app.services.ollama_service import ollama_service
 
 router = APIRouter()
 
+
 @router.get('/health')
-async def get_health():
-    return {'status': 'ok', 'ollama': 'available' if await health_check() else 'unavailable'}
+def health():
+    return {'status': 'ok', 'ollama': ollama_service.health()}

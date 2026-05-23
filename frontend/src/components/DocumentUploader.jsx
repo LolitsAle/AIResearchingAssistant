@@ -1,65 +1,53 @@
-/**
- * FE1 implement
- * Props:
- *   onSuccess: (doc: DocumentResponse) => void
- */
-import { useState, useRef } from 'react'
-import { uploadDocument } from '../services/api'
+import { useRef, useState } from 'react'
+import { api } from '../services/api'
 
 export default function DocumentUploader({ onSuccess }) {
   const [uploading, setUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [error, setError] = useState(null)
-  const inputRef = useRef()
+  const [error, setError] = useState('')
+  const inputRef = useRef(null)
 
   const handleFile = async (file) => {
     if (!file) return
-    if (!file.name.endsWith('.pdf')) {
-      setError('Chỉ chấp nhận file PDF')
-      return
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      setError('File quá lớn, tối đa 20MB')
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setError('Chỉ chấp nhận file PDF.')
       return
     }
 
-    setError(null)
     setUploading(true)
-    setProgress(0)
+    setError('')
 
     try {
-      const doc = await uploadDocument(file, setProgress)
-      onSuccess?.(doc)
+      const result = await api.uploadPaper(file)
+      onSuccess?.(result?.paper)
     } catch (err) {
-      const msg = err.response?.data?.error?.message || 'Upload thất bại'
-      setError(msg)
+      setError(err.message || 'Upload thất bại. Vui lòng thử lại.')
     } finally {
       setUploading(false)
-      setProgress(0)
       if (inputRef.current) inputRef.current.value = ''
     }
   }
 
   return (
-    <div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".pdf"
-        onChange={(e) => handleFile(e.target.files[0])}
-        disabled={uploading}
-      />
+    <section className="uploader-card">
+      <div className="uploader-icon" aria-hidden>
+        ⬆
+      </div>
+      <h3>Tải lên paper PDF</h3>
+      <p>Hỗ trợ tài liệu PDF học thuật để AI đọc và phân tích tự động.</p>
 
-      {/* TODO: FE1 thêm drag-and-drop */}
+      <label className={`upload-button ${uploading ? 'is-disabled' : ''}`}>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          onChange={(e) => handleFile(e.target.files?.[0])}
+          disabled={uploading}
+        />
+        {uploading ? 'AI đang phân tích tài liệu...' : 'Chọn file PDF'}
+      </label>
 
-      {uploading && (
-        <div>
-          <progress value={progress} max={100} />
-          <span>{progress}% — Đang xử lý, vui lòng chờ...</span>
-        </div>
-      )}
-
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-    </div>
+      {uploading && <div className="uploader-status">Đang tải tài liệu lên hệ thống...</div>}
+      {error && <div className="uploader-error">{error}</div>}
+    </section>
   )
 }

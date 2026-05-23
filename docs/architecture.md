@@ -1,25 +1,54 @@
 # Architecture
+
 ## Frontend (React + Vite)
-- Sidebar: upload, health, paper list.
-- Main workspace: summary, chat, terms, compare, quick actions.
-- Source panel: citations with section/page/snippet/score.
-- API layer centralized in `frontend/src/services/api.js`.
+- `src/services/api.js`: all API requests.
+- Pages: Home and Research workspace.
+- Components: uploader, paper list, chat, source cards, compare and term explain sections.
+- Mobile-first: stacked sections; desktop: document / chat / sources workspace.
 
 ## Backend (FastAPI)
-- Routers: health + papers endpoints.
+- `app/main.py`: app setup + routers + CORS.
+- `core/config.py`: env-based configuration.
+- `db/models.py`: SQLite schema via SQLAlchemy.
+- Routers:
+  - health
+  - papers (upload/list/detail/delete/summarize)
+  - chat (ask/term/chat history)
+  - compare
 - Services:
-  - PDF extraction via PyMuPDF.
-  - Chunking by page/section with overlap.
-  - Retrieval via TF-IDF cosine top-5.
-  - Ollama integration for summary, QA, term explain, compare.
-- Persistence: SQLite via SQLAlchemy.
+  - `pdf_service`: PDF parsing with PyMuPDF
+  - `chunk_service`: chunk generation
+  - `retrieval_service`: TF-IDF + cosine top-k
+  - `ollama_service`: local Ollama HTTP wrapper
+  - `summary_service` / `comparison_service`: LLM orchestration
 
-## PDF Processing flow
-Upload -> validate PDF -> save local file -> extract per-page text -> detect section headings -> chunk -> persist chunks.
+## PDF processing flow
+1. Upload PDF.
+2. Save file to `backend/app/storage/uploads`.
+3. Extract page text using PyMuPDF.
+4. Detect sections by common headings.
+5. Chunk text with overlap and persist to SQLite.
 
 ## RAG flow
-Question -> load paper chunks -> TF-IDF rank top 5 -> build grounded prompt -> Ollama generate -> return answer + chunk citations -> save chat.
+1. Receive question.
+2. Load paper chunks.
+3. TF-IDF retrieval top 5 chunks.
+4. Build grounded prompt with chunk context.
+5. Send to Ollama generate endpoint.
+6. Return answer + citations from real chunks.
 
-## Storage
-- DB: `backend/research_assistant.db`
-- Upload files: `backend/app/storage/uploads`
+## Ollama integration
+- Base URL: env `OLLAMA_BASE_URL`.
+- Chat model: `OLLAMA_CHAT_MODEL` (default `llama3.1`).
+- Health uses `/api/tags`.
+- Generation uses `/api/generate`.
+
+## SQLite schema
+- `papers`
+- `paper_chunks`
+- `paper_summaries`
+- `chat_messages`
+
+## Local storage
+- Uploaded PDFs stored locally in `app/storage/uploads`.
+- Metadata, chunks, summary, chat persisted in SQLite DB (`research_assistant.db`).

@@ -1,70 +1,58 @@
 import json
 
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.models.schemas import AskRequest
-from app.routers.utils import raise_contract_error, success_response
-from app.services.embedder import embed_query
-from app.services.llm import generate_answer, generate_answer_stream
-from app.services.retriever import retrieve_chunks
+from app.core.errors import AppError
+from app.db.database import get_db
+from app.db.models import ChatMessage, Paper, PaperChunk
+from app.schemas.chat import AskRequest, ExplainTermRequest
+from app.services.ollama_service import ollama_service
+from app.services.retrieval_service import retrieve_top_chunks
 
 router = APIRouter()
 
 
-@router.post("/ask", response_model=dict)
-async def ask(request: AskRequest):
-    try:
-        query_vector = await embed_query(request.question)
-    except Exception:
-        raise_contract_error(500, "EMBED_FAILED")
-
-    chunks = await retrieve_chunks(query_vector, request.doc_id)
-    if not chunks:
-        raise_contract_error(404, "DOC_NOT_FOUND", "Không tìm thấy tài liệu hoặc chưa có dữ liệu")
-
-    try:
-        answer = await generate_answer(request.question, chunks, request.chat_history)
-    except Exception:
-        raise_contract_error(500, "LLM_FAILED")
-
-    sources = [
-        {"chunk_id": c["id"], "content": c["content"], "page": c["page_number"], "score": round(c["similarity"], 4)}
-        for c in chunks
-    ]
-
-    return success_response(
-        {
-            "answer": answer["text"],
-            "sources": sources,
-            "tokens_used": answer.get("tokens_used"),
-        }
-    )
+def _citations(results):
+    out = []
+    for r in results:
+        c = r['chunk']
+        out.append({'chunk_id': c.id, 'paper_id': c.paper_id, 'section': c.section, 'page_start': c.page_start, 'page_end': c.page_end, 'snippet': c.content[:280], 'score': r['score']})
+    return out
 
 
-@router.post("/ask/stream")
-async def ask_stream(request: AskRequest):
-    try:
-        query_vector = await embed_query(request.question)
-    except Exception:
-        raise_contract_error(500, "EMBED_FAILED")
+@router.post('/papers/{paper_id}/ask')
+def ask(paper_id: str, req: AskRequest, db: Session = Depends(get_db)):
+    if not req.question.strip():
+        raise AppError('Question is required', 400)
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise AppError('Paper not found', 404)
+    chunks = db.query(PaperChunk).filter(PaperChunk.paper_id == paper_id).all()
+    top = retrieve_top_chunks(req.question, chunks, 5)
+    context = '\n\n'.join([f"[{i+1}] {r['chunk'].content}" for i, r in enumerate(top)])
+    prompt = f"Trả lời chỉ dựa trên context sau. Nếu không đủ thì nói rõ không tìm thấy thông tin chắc chắn trong tài liệu.\nContext:\n{context}\n\nCâu hỏi:{req.question}"
+    answer = ollama_service.generate_text(prompt)
+    cites = _citations(top)
+    db.add(ChatMessage(paper_id=paper_id, role='user', content=req.question, citations_json='[]'))
+    db.add(ChatMessage(paper_id=paper_id, role='assistant', content=answer, citations_json=json.dumps(cites, ensure_ascii=False)))
+    db.commit()
+    return {'answer': answer, 'citations': cites}
 
-    chunks = await retrieve_chunks(query_vector, request.doc_id)
-    if not chunks:
-        raise_contract_error(404, "DOC_NOT_FOUND")
 
-    sources = [
-        {"chunk_id": c["id"], "content": c["content"], "page": c["page_number"], "score": round(c["similarity"], 4)}
-        for c in chunks
-    ]
+@router.post('/papers/{paper_id}/terms/explain')
+def explain_term(paper_id: str, req: ExplainTermRequest, db: Session = Depends(get_db)):
+    if not req.term.strip():
+        raise AppError('Term is required', 400)
+    chunks = db.query(PaperChunk).filter(PaperChunk.paper_id == paper_id).all()
+    top = retrieve_top_chunks(req.term, chunks, 5)
+    context = '\n'.join([x['chunk'].content for x in top])
+    prompt = f"Giải thích thuật ngữ '{req.term}' cho sinh viên dựa trên paper. Nếu không có thông tin thì nói rõ. Context:\n{context}"
+    explanation = ollama_service.generate_text(prompt)
+    return {'term': req.term, 'explanation': explanation, 'citations': _citations(top)}
 
-    async def event_generator():
-        try:
-            yield f"data: {json.dumps({'type': 'sources', 'sources': sources}, ensure_ascii=False)}\n\n"
-            async for token in generate_answer_stream(request.question, chunks, request.chat_history):
-                yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-        except Exception:
-            yield f"data: {json.dumps({'type': 'error', 'code': 'LLM_FAILED', 'message': 'Lỗi khi gọi Gemini Flash'}, ensure_ascii=False)}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+@router.get('/papers/{paper_id}/chat')
+def chat_history(paper_id: str, db: Session = Depends(get_db)):
+    rows = db.query(ChatMessage).filter(ChatMessage.paper_id == paper_id).order_by(ChatMessage.created_at.asc()).all()
+    return {'messages': [{'id': r.id, 'role': r.role, 'content': r.content, 'citations': json.loads(r.citations_json or '[]'), 'created_at': r.created_at} for r in rows]}

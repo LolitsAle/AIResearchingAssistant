@@ -1,47 +1,32 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+
 from app.core.config import settings
+from app.core.errors import register_exception_handlers
 from app.db.init_db import init_db
+from app.routers.chat import router as chat_router
+from app.routers.compare import router as compare_router
 from app.routers.health import router as health_router
 from app.routers.papers import router as papers_router
 
-# 1. Thay thế cách khởi chạy DB theo chuẩn FastAPI mới (lifespan)
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    init_db()
-    yield
+app = FastAPI(title='AI Researching Assistant API', version='1.0.0')
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
-
-# 2. Giữ nguyên cấu hình CORS mặc định cho các request thành công
-origins = [o.strip() for o in settings.cors_origins.split(',')]
 app.add_middleware(
-    CORSMiddleware, 
-    allow_origins=origins, 
-    allow_credentials=True, 
-    allow_methods=['*'], 
-    allow_headers=['*']
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
-# 3. SỬA TẠI ĐÂY: Ép hàm bắt lỗi phải trả về kèm Header CORS
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    response = JSONResponse(
-        status_code=500, 
-        content={'error': {'code': 'INTERNAL_ERROR', 'message': str(exc)}}
-    )
-    
-    # Lấy origin từ request gửi lên (nếu nó nằm trong danh sách được phép)
-    request_origin = request.headers.get("origin")
-    if request_origin in origins or "*" in origins:
-        response.headers["Access-Control-Allow-Origin"] = request_origin or "*"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        
-    return response
+register_exception_handlers(app)
 
-app.include_router(health_router, prefix=settings.api_prefix)
-app.include_router(papers_router, prefix=settings.api_prefix)
+app.include_router(health_router, prefix='/api', tags=['health'])
+app.include_router(papers_router, prefix='/api', tags=['papers'])
+app.include_router(chat_router, prefix='/api', tags=['chat'])
+app.include_router(compare_router, prefix='/api', tags=['compare'])
+
+
+@app.on_event('startup')
+def on_startup() -> None:
+    init_db()
