@@ -95,5 +95,5 @@ export default function ResearchPage() {
         </section>
       </main>
     </div>
-  )
+  </div>
 }
