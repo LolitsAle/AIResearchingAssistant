@@ -1,59 +1,76 @@
 import { useEffect, useRef } from 'react'
 
-export default function ChatBox({
-  messages = [],
-  value,
-  onChange,
-  onSubmit,
-  loading,
-  error,
-  disabled,
-  placeholder = 'Đặt câu hỏi về tài liệu...',
-}) {
+const suggestions = [
+  'Tóm tắt paper này giúp tôi',
+  'Bài này đóng góp gì mới?',
+  'Giải thích phương pháp nghiên cứu',
+  'Hạn chế của nghiên cứu này là gì?',
+]
+
+export default function ChatBox({ messages = [], value, onChange, onSubmit, loading, error, disabled, sourcesCount = 0 }) {
   const bottomRef = useRef(null)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, loading])
 
-  const handleKeyDown = (event) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      onSubmit?.()
-    }
-  }
-
   return (
-    <div>
-      <div style={{ minHeight: 320, maxHeight: 540, overflowY: 'auto', marginBottom: 12 }}>
-        {messages.length === 0 && <p style={{ color: '#64748b' }}>Hãy nhập câu hỏi để bắt đầu nghiên cứu tài liệu.</p>}
+    <section className="chat-shell">
+      <div className="chat-log">
+        {!messages.length && (
+          <div className="chat-empty">
+            <p>AI đang sẵn sàng đồng hành cùng bạn. Hãy chọn một gợi ý:</p>
+            <div className="quick-actions">
+              {suggestions.map((item) => (
+                <button key={item} onClick={() => onChange?.(item)} type="button">
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {messages.map((msg, index) => (
-          <div key={`${msg.role}-${index}`} style={{ marginBottom: 12 }}>
-            <strong>{msg.role === 'user' ? 'Bạn' : 'Trợ lý'}:</strong>
-            <p style={{ whiteSpace: 'pre-wrap', margin: '4px 0 0' }}>{msg.content}</p>
+          <div key={`${msg.role}-${index}`} className={`msg-row ${msg.role}`}>
+            <div className="avatar">{msg.role === 'user' ? 'U' : 'AI'}</div>
+            <div className="msg-bubble">{msg.content}</div>
           </div>
         ))}
 
-        {loading && <p style={{ marginTop: 8 }}>Đang xử lý câu trả lời...</p>}
+        {loading && (
+          <div className="msg-row assistant">
+            <div className="avatar">AI</div>
+            <div className="msg-bubble loading-bubble">
+              AI đang phân tích tài liệu... Tìm nguồn liên quan trong paper... Đang tạo câu trả lời...
+              <span className="dots"><span>.</span><span>.</span><span>.</span></span>
+            </div>
+          </div>
+        )}
+
         <div ref={bottomRef} />
       </div>
 
-      {error && <p style={{ color: '#b91c1c', marginBottom: 8 }}>{error}</p>}
+      {sourcesCount > 0 && <div className="source-hint">{sourcesCount} nguồn được tìm thấy</div>}
+      {error && <div className="chat-error">{error}</div>}
 
-      <textarea
-        value={value}
-        onChange={(e) => onChange?.(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        disabled={loading || disabled}
-        rows={4}
-        maxLength={1000}
-        style={{ width: '100%', resize: 'vertical', marginBottom: 8, padding: 10 }}
-      />
-      <button onClick={onSubmit} disabled={loading || disabled || !value?.trim()}>
-        {loading ? 'Đang gửi...' : 'Gửi câu hỏi'}
-      </button>
-    </div>
+      <div className="chat-input-wrap">
+        <textarea
+          value={value}
+          onChange={(e) => onChange?.(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              onSubmit?.()
+            }
+          }}
+          placeholder="Đặt câu hỏi học thuật, ví dụ: Hãy so sánh phương pháp của bài này với nghiên cứu truyền thống."
+          disabled={disabled || loading}
+          rows={3}
+        />
+        <button onClick={onSubmit} disabled={!value?.trim() || disabled || loading}>
+          {loading ? 'Đang gửi...' : 'Gửi'}
+        </button>
+      </div>
+    </section>
   )
 }

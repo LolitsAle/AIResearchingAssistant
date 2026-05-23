@@ -1,33 +1,26 @@
-function formatScore(score) {
-  if (typeof score !== 'number' || Number.isNaN(score)) return null
-  return `${Math.round(score * 100)}%`
+function toScore(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null
+  return `${Math.round(value * 100)}%`
 }
 
 export default function SourceCard({ source }) {
   if (!source) return null
 
-  const title = source.title || `Chunk ${source.chunk_id || ''}`.trim() || 'Nguồn không rõ tên'
-  const url = source.url || source.link
-  const snippet = source.content || source.snippet || source.summary || 'Không có nội dung trích dẫn.'
-  const pageText = typeof source.page === 'number' ? `Trang ${source.page}` : 'Không rõ trang'
-  const scoreText = formatScore(source.score)
+  const section = source.section || source.title || 'Nguồn tham chiếu'
+  const page = source.page || source.page_start
+  const pageEnd = source.page_end
+  const pageText = page ? (pageEnd && pageEnd !== page ? `Trang ${page}-${pageEnd}` : `Trang ${page}`) : 'Không rõ trang'
+  const score = toScore(source.score)
+  const snippet = source.snippet || source.content || source.text || 'Không có đoạn trích phù hợp.'
 
   return (
-    <article style={{ borderTop: '1px solid #e2e8f0', paddingTop: 10, marginTop: 10 }}>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>
-        {url ? (
-          <a href={url} target="_blank" rel="noreferrer">
-            {title}
-          </a>
-        ) : (
-          <span>{title}</span>
-        )}
-      </div>
-      <small style={{ color: '#64748b' }}>
-        {pageText}
-        {scoreText ? ` · Độ liên quan: ${scoreText}` : ''}
-      </small>
-      <p style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{snippet}</p>
+    <article className="source-card">
+      <header>
+        <h4>{section}</h4>
+        <span className="page-badge">{pageText}</span>
+      </header>
+      <p>{snippet}</p>
+      {score && <div className="source-score">Độ liên quan: {score}</div>}
     </article>
   )
 }
