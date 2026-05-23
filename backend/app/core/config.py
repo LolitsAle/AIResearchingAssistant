@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     ollama_embed_model: str = 'nomic-embed-text'
     database_url: str = 'sqlite:///./research_assistant.db'
     upload_dir: str = './app/storage/uploads'
-    cors_origins: str = 'http://localhost:5173'
+    cors_origins: str = 'http://localhost:5173,http://127.0.0.1:5173'
 
     @property
     def cors_origins_list(self) -> list[str]:

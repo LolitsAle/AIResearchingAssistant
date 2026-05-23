@@ -1,21 +1,45 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
 
 async function request(path, options = {}) {
+  const method = options.method || 'GET'
+  const url = `${API_BASE}${path}`
+  console.debug('[API]', method, url)
+
   try {
-    const res = await fetch(`${API_BASE}${path}`, options)
-    const data = await res.json().catch(() => ({}))
+    const res = await fetch(url, options)
+    const text = await res.text()
+    let data = {}
+
+    if (text) {
+      try {
+        data = JSON.parse(text)
+      } catch {
+        data = { raw: text }
+      }
+    }
+
     if (!res.ok) {
-      const message = data?.error?.message || data?.detail || 'Đã có lỗi từ máy chủ.'
+      const message =
+        data?.error?.message ||
+        data?.detail ||
+        `Request thất bại (${res.status})`
       throw new Error(message)
     }
+
     return data
   } catch (error) {
-    if (error instanceof Error) throw error
-    throw new Error('Không thể kết nối backend.')
+    if (error instanceof TypeError) {
+      throw new Error('Không kết nối được backend. Hãy kiểm tra FastAPI đang chạy tại http://localhost:8000.')
+    }
+    throw error instanceof Error ? error : new Error('Không thể kết nối backend.')
   }
 }
 
-const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+const json = (method, body) => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+})
 
 export const api = {
   getHealth: () => request('/health'),
