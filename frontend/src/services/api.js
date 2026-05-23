@@ -1,29 +1,42 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
 
 async function request(path, options = {}) {
-  let res
   try {
-    res = await fetch(`${API_BASE}${path}`, options)
-  } catch {
-    throw new Error('Backend is not reachable. Please start FastAPI server.')
+    const res = await fetch(`${API_BASE}${path}`, options)
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const message = data?.error?.message || data?.detail || 'Đã có lỗi từ máy chủ.'
+      throw new Error(message)
+    }
+    return data
+  } catch (error) {
+    if (error instanceof Error) throw error
+    throw new Error('Không thể kết nối backend.')
   }
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data?.error?.message || data?.detail || 'Request failed')
-  return data
 }
 
+const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+
 export const api = {
-  health: () => request('/health'),
-  listPapers: () => request('/papers'),
-  uploadPaper: (file) => {
-    const fd = new FormData(); fd.append('file', file)
-    return request('/papers/upload', { method: 'POST', body: fd })
-  },
-  getPaper: (id) => request(`/papers/${id}`),
-  deletePaper: (id) => request(`/papers/${id}`, { method: 'DELETE' }),
-  summarize: (id) => request(`/papers/${id}/summarize`, { method: 'POST' }),
-  ask: (id, question) => request(`/papers/${id}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) }),
-  explainTerm: (id, term) => request(`/papers/${id}/terms/explain`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ term }) }),
-  compare: (paper_ids) => request('/papers/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paper_ids }) }),
-  chat: (id) => request(`/papers/${id}/chat`),
+  getHealth: () => request('/health'),
+  getWorkspaces: () => request('/workspaces'),
+  createWorkspace: (payload) => request('/workspaces', json('POST', payload)),
+  updateWorkspace: (workspaceId, payload) => request(`/workspaces/${workspaceId}`, json('PATCH', payload)),
+  deleteWorkspace: (workspaceId) => request(`/workspaces/${workspaceId}`, { method: 'DELETE' }),
+  getWorkspace: (workspaceId) => request(`/workspaces/${workspaceId}`),
+  getWorkspaceSources: (workspaceId) => request(`/workspaces/${workspaceId}/sources`),
+  uploadDocument: (workspaceId, file) => { const fd = new FormData(); fd.append('file', file); return request(`/workspaces/${workspaceId}/documents/upload`, { method: 'POST', body: fd }) },
+  deleteDocument: (documentId) => request(`/papers/${documentId}`, { method: 'DELETE' }),
+  updateSourceSelection: (workspaceId, selectedDocumentIds) => request(`/workspaces/${workspaceId}/sources/selection`, json('PATCH', { selected_document_ids: selectedDocumentIds })),
+  getWorkspaceChat: (workspaceId) => request(`/workspaces/${workspaceId}/chat`),
+  createNewChat: (workspaceId) => request(`/workspaces/${workspaceId}/chat/new`, { method: 'POST' }),
+  sendWorkspaceMessage: (workspaceId, payload) => request(`/workspaces/${workspaceId}/chat`, json('POST', payload)),
+  runStudioTemplate: (workspaceId, payload) => request(`/workspaces/${workspaceId}/studio/run`, json('POST', payload)),
+  getNotes: (workspaceId) => request(`/workspaces/${workspaceId}/notes`),
+  createNote: (workspaceId, payload) => request(`/workspaces/${workspaceId}/notes`, json('POST', payload)),
+  updateNote: (noteId, payload) => request(`/notes/${noteId}`, json('PATCH', payload)),
+  deleteNote: (noteId) => request(`/notes/${noteId}`, { method: 'DELETE' }),
+  getAnalytics: (workspaceId) => request(`/workspaces/${workspaceId}/analytics`),
+  getSettings: () => request('/settings'),
+  updateSettings: (payload) => request('/settings', json('PATCH', payload)),
 }

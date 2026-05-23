@@ -1,126 +1,41 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import ChatBox from '../components/ChatBox'
-import DocumentList from '../components/DocumentList'
-import DocumentUploader from '../components/DocumentUploader'
-import SourceCard from '../components/SourceCard'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../services/api'
 
-const quickActions = [
-  'Tóm tắt tài liệu này',
-  'Rút ra các ý chính',
-  'So sánh các nguồn',
-  'Tìm rủi ro hoặc điểm bất thường',
+const TEMPLATES = [
+  ['overview', 'Tổng quan tài liệu'], ['deep_summary', 'Tóm tắt chuyên sâu'], ['key_arguments', 'Rút trích luận điểm'], ['mind_map', 'Bản đồ tư duy'], ['quiz', 'Bài kiểm tra'], ['flashcards', 'Flashcards'], ['terminology', 'Giải thích thuật ngữ'], ['compare_sources', 'So sánh nhiều nguồn'], ['citation_answer', 'Trả lời có trích dẫn'], ['data_table', 'Bảng dữ liệu'],
 ]
 
 export default function ResearchPage() {
-  const { docId } = useParams()
-  const navigate = useNavigate()
-  const [documents, setDocuments] = useState([])
-  const [messages, setMessages] = useState([])
-  const [input, setInput] = useState('')
-  const [sources, setSources] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [mobilePane, setMobilePane] = useState('chat')
-
-  const selectedDoc = useMemo(
-    () => documents.find((doc) => String(doc.id || doc.doc_id) === String(docId)),
-    [documents, docId],
-  )
-
-  useEffect(() => {
-    api.listPapers().then((d) => setDocuments(d?.papers || [])).catch(console.error)
-  }, [])
-
-  const sendQuestion = async (text = input) => {
-    if (!docId || docId === 'new') return
-    const question = text.trim()
-    if (!question || loading) return
-    setError('')
-    setInput('')
-    setMessages((v) => [...v, { role: 'user', content: question }])
-    setLoading(true)
-    try {
-      const r = await api.ask(docId, question)
-      setMessages((v) => [...v, { role: 'assistant', content: r?.answer || 'Không có câu trả lời phù hợp.' }])
-      setSources(Array.isArray(r?.citations) ? r.citations : [])
-      setMobilePane('sources')
-    } catch (err) {
-      setError(err.message || 'Không thể gửi câu hỏi tới hệ thống.')
-    } finally {
-      setLoading(false)
-    }
+  const [workspaces, setWorkspaces] = useState([]); const [workspaceId, setWorkspaceId] = useState('')
+  const [workspaceName, setWorkspaceName] = useState(''); const [sources, setSources] = useState([]); const [selectedIds, setSelectedIds] = useState([])
+  const [messages, setMessages] = useState([]); const [notes, setNotes] = useState([]); const [input, setInput] = useState(''); const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false); const [search, setSearch] = useState(''); const [settings, setSettings] = useState({ accent_color: '#6d5dfc' })
+  const fileRef = useRef(null)
+  const loadWorkspace = async (id) => {
+    const [src, chat, ns] = await Promise.all([api.getWorkspaceSources(id), api.getWorkspaceChat(id), api.getNotes(id)])
+    setSources(src.documents || []); setSelectedIds(src.selected_document_ids || []); setMessages(chat.messages || []); setNotes(ns.notes || [])
   }
+  useEffect(() => { (async () => {
+    const wsr = await api.getWorkspaces(); let list = wsr.workspaces || []
+    if (!list.length) { const created = await api.createWorkspace({ name: 'Workspace mặc định' }); list = [created] }
+    setWorkspaces(list); setWorkspaceId(list[0].id); setWorkspaceName(list[0].name); await loadWorkspace(list[0].id)
+    const st = await api.getSettings(); setSettings(st); document.documentElement.style.setProperty('--accent', st.accent_color || '#6d5dfc')
+  })().catch((e) => setError(e.message)) }, [])
 
-  return (
-    <div className="research-page">
-      <div className="mobile-switcher card-glass">
-        <button className={mobilePane === 'docs' ? 'is-active' : ''} onClick={() => setMobilePane('docs')}>Tài liệu</button>
-        <button className={mobilePane === 'chat' ? 'is-active' : ''} onClick={() => setMobilePane('chat')}>Chat AI</button>
-        <button className={mobilePane === 'sources' ? 'is-active' : ''} onClick={() => setMobilePane('sources')}>Nguồn</button>
-      </div>
-
-      <aside className={`left-panel card-glass mobile-pane ${mobilePane === 'docs' ? 'show-pane' : ''}`}>
-        <Link to="/" className="brand">AI Research Notebook</Link>
-        <p className="muted">Knowledge workspace cho nghiên cứu học thuật.</p>
-        <button className="new-notebook" onClick={() => navigate('/research/new')}>+ Tạo phiên nghiên cứu mới</button>
-
-        <DocumentUploader
-          onSuccess={(doc) => {
-            setDocuments((prev) => [doc, ...prev])
-            const newId = doc?.id || doc?.doc_id
-            if (newId) navigate(`/research/${newId}`)
-          }}
-        />
-
-        <DocumentList
-          documents={documents}
-          selectedId={docId}
-          onSelect={(id) => {
-            navigate(`/research/${id}`)
-            setMobilePane('chat')
-          }}
-          onDelete={async (id) => {
-            await api.deletePaper(id)
-            setDocuments((prev) => prev.filter((item) => (item.id || item.doc_id) !== id))
-          }}
-        />
-      </aside>
-
-      <main className={`main-panel card-glass mobile-pane ${mobilePane === 'chat' ? 'show-pane' : ''}`}>
-        <header className="workspace-header">
-          <h2>{selectedDoc?.title || selectedDoc?.filename || 'Notebook nghiên cứu mới'}</h2>
-          <p>{selectedDoc ? 'Hỏi AI dựa trên tài liệu của bạn. Câu trả lời ưu tiên trích dẫn nguồn.' : 'Tải lên một tài liệu PDF để bắt đầu notebook nghiên cứu.'}</p>
-        </header>
-
-        <div className="quick-actions">
-          {quickActions.map((action) => (
-            <button key={action} onClick={() => setInput(action)}>{action}</button>
-          ))}
-        </div>
-
-        <ChatBox
-          messages={messages}
-          value={input}
-          onChange={setInput}
-          onSubmit={() => sendQuestion()}
-          loading={loading}
-          error={error}
-          disabled={!selectedDoc}
-          sourcesCount={sources.length}
-        />
-      </main>
-
-      <aside className={`right-panel card-glass mobile-pane ${mobilePane === 'sources' ? 'show-pane' : ''}`}>
-        <h3>Nguồn tham chiếu</h3>
-        <p className="muted">Citation-first answers cho từng phản hồi của AI.</p>
-        {!sources.length ? (
-          <p className="muted">Chưa có nguồn. Hãy gửi câu hỏi để AI tìm các đoạn liên quan trong tài liệu.</p>
-        ) : (
-          sources.map((source, idx) => <SourceCard key={source.chunk_id || idx} source={source} />)
-        )}
-      </aside>
+  const filtered = useMemo(() => sources.filter((d) => (d.title || d.filename).toLowerCase().includes(search.toLowerCase())), [sources, search])
+  const send = async (text=input) => { const message = text.trim(); if (!message || !workspaceId || loading) return; if (!selectedIds.length) return setError('Vui lòng chọn ít nhất một nguồn để AI trả lời có căn cứ.');
+    setError(''); setInput(''); setLoading(true); setMessages((m)=>[...m,{role:'user',content:message}])
+    try { const r = await api.sendWorkspaceMessage(workspaceId,{message,selected_document_ids:selectedIds}); setMessages((m)=>[...m,{role:'assistant',content:r.answer,citations:r.citations||[]}]) } catch(e){setError(e.message)} finally {setLoading(false)} }
+  return <div className='workspace-shell'>
+    <div className='top-nav'><div className='left'><strong>◉ AI Researching Assistant</strong><select value={workspaceId} onChange={async e=>{const id=e.target.value;setWorkspaceId(id);const w=workspaces.find(x=>x.id===id);setWorkspaceName(w?.name||'');await loadWorkspace(id)}}>{workspaces.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select><input value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} onBlur={async()=>{if(workspaceId) await api.updateWorkspace(workspaceId,{name:workspaceName})}}/></div>
+    <div className='right'><button onClick={async()=>{await api.createNewChat(workspaceId); setMessages([])}}>+ Tạo đoạn chat mới</button><button onClick={async()=>alert(JSON.stringify(await api.getAnalytics(workspaceId),null,2))}>Số liệu phân tích</button><button onClick={async()=>{const next=prompt('Accent color hex',settings.accent_color)||settings.accent_color;const st=await api.updateSettings({theme_mode:'dark',accent_color:next});setSettings(st);document.documentElement.style.setProperty('--accent',st.accent_color)}}>Cài đặt</button></div></div>
+    <div className='workspace-grid'>
+      <section className='panel'><h3>Nguồn</h3><button onClick={()=>fileRef.current?.click()}>+ Thêm nguồn</button><input ref={fileRef} hidden type='file' accept='application/pdf' onChange={async e=>{const f=e.target.files?.[0];if(f){await api.uploadDocument(workspaceId,f);await loadWorkspace(workspaceId)}}} />
+      <input placeholder='Tìm nguồn...' value={search} onChange={e=>setSearch(e.target.value)} /><label><input type='checkbox' checked={selectedIds.length===sources.length&&sources.length>0} onChange={async e=>{const ids=e.target.checked?sources.map(s=>s.id):[];setSelectedIds(ids);await api.updateSourceSelection(workspaceId,ids)}} />Chọn tất cả</label><small>{selectedIds.length} nguồn được chọn</small>
+      <div className='list'>{filtered.map(d=><div className='item' key={d.id}><label><input type='checkbox' checked={selectedIds.includes(d.id)} onChange={async()=>{const ids=selectedIds.includes(d.id)?selectedIds.filter(x=>x!==d.id):[...selectedIds,d.id];setSelectedIds(ids);await api.updateSourceSelection(workspaceId,ids)}} />{d.title||d.filename}</label><small>{d.status} • {d.page_count} trang • {d.chunk_count} chunks</small></div>)}</div></section>
+      <section className='panel center'><h3>Cuộc trò chuyện</h3><div className='chat-log'>{messages.map((m,i)=><div key={i} className={`msg ${m.role}`}><p>{m.content}</p>{m.citations?.length>0 && <div>{m.citations.map((c,idx)=><button key={c.chunk_id} title={c.snippet}>[{idx+1}]</button>)}</div>} {m.role==='assistant'&&<button onClick={async()=>{await api.createNote(workspaceId,{title:'Ghi chú từ chat',content:m.content,citations:m.citations||[]});setNotes((await api.getNotes(workspaceId)).notes||[])}}>Lưu vào ghi chú</button>}</div>)}{loading&&<div className='msg assistant'><p>AI đang tìm đoạn liên quan...<br/>AI đang đọc các nguồn đã chọn...<br/>AI đang tạo câu trả lời có trích dẫn...</p></div>}</div>
+      {error&&<div className='error'>{error}</div>}<div className='chat-input'><textarea value={input} onChange={e=>setInput(e.target.value)} placeholder='Đặt câu hỏi hoặc tạo nội dung' onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}/><div><span>{selectedIds.length} nguồn</span><button onClick={()=>send()} disabled={loading||!input.trim()||!selectedIds.length}>➤</button></div></div></section>
+      <section className='panel'><h3>Studio</h3><div className='studio-grid'>{TEMPLATES.map(([k,t])=><button key={k} onClick={async()=>{const r=await api.runStudioTemplate(workspaceId,{template:k,selected_document_ids:selectedIds});setNotes((p)=>[{...r,id:Math.random().toString()},...p])}}>{t}</button>)}</div><h4>Ghi chú</h4><div className='list'>{notes.length?notes.map(n=><div className='item' key={n.id}><strong>{n.title}</strong><p>{n.content}</p></div>):<p>Đầu ra của Studio sẽ được lưu ở đây.</p>}</div></section>
     </div>
-  )
+  </div>
 }
