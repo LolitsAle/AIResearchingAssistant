@@ -7,26 +7,34 @@ function formatDate(value) {
 
 function toStatus(status) {
   const normalized = String(status || '').toLowerCase()
-  if (normalized.includes('process') || normalized.includes('pending')) return { label: 'Đang xử lý', tone: 'processing' }
-  if (normalized.includes('error') || normalized.includes('fail')) return { label: 'Lỗi', tone: 'error' }
+  if (normalized.includes('process') || normalized.includes('pending'))
+    return { label: 'Đang xử lý', tone: 'processing' }
+  if (normalized.includes('error') || normalized.includes('fail'))
+    return { label: 'Lỗi', tone: 'error' }
   return { label: 'Sẵn sàng', tone: 'ready' }
 }
 
-export default function DocumentList({ documents = [], selectedId, onSelect, onDelete }) {
-  if (!documents.length) return <div className="doc-empty">Chưa có tài liệu nào.</div>
+export default function DocumentList({
+  documents = [],
+  selectedId,
+  onSelect,
+  onDelete,
+}) {
+  if (!documents.length)
+    return <div className="doc-empty">Chưa có tài liệu nào.</div>
 
   return (
     <div className="doc-list">
       {documents.map((doc) => {
-        const docId = doc?.id || doc?.doc_id
-        const title = doc?.title || doc?.filename || 'Tài liệu chưa đặt tên'
-        const status = toStatus(doc?.status)
+        const docId     = doc?.id || doc?.doc_id
+        const title     = doc?.title || doc?.filename || 'Tài liệu chưa đặt tên'
+        const status    = toStatus(doc?.status)
         const createdAt = formatDate(doc?.created_at || doc?.createdAt)
 
         return (
           <article
             key={docId}
-            className={`doc-item ${String(selectedId) === String(docId) ? 'is-active' : ''}`}
+            className={`doc-item fade-in ${String(selectedId) === String(docId) ? 'is-active' : ''}`}
             onClick={() => onSelect?.(docId)}
             role="button"
             tabIndex={0}
@@ -39,6 +47,7 @@ export default function DocumentList({ documents = [], selectedId, onSelect, onD
                 {createdAt && <span>{createdAt}</span>}
               </div>
             </div>
+
             <button
               className="doc-delete"
               onClick={(e) => {

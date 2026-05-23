@@ -1,3 +1,46 @@
-/* Global helpers intentionally lightweight; core theme in styles.css */
-.fade-in { animation: fadeIn .35s ease; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+/* ─── Global Helpers ─── */
+/*
+  Lora với đầy đủ subset tiếng Việt (latin-ext + vietnamese).
+  Tải cả 4 trọng số thường dùng: 400, 500, 600, 700 — cả regular lẫn italic.
+*/
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&subset=vietnamese&display=swap');
+
+/* ─── Custom Scrollbar (global) ─── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2e3440 transparent;
+}
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2e3440;
+  border-radius: 99px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #404859;
+}
+
+/* ─── Fade-in utility ─── */
+.fade-in {
+  animation: fadeIn 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Stagger helpers ─── */
+.stagger-1 { animation-delay: 0.06s; }
+.stagger-2 { animation-delay: 0.12s; }
+.stagger-3 { animation-delay: 0.18s; }
+
+/* ─── Selection color ─── */
+::selection {
+  background: rgba(109, 93, 252, 0.35);
+  color: #f4f7fb;
+}
