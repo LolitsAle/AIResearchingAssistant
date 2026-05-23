@@ -1,126 +1,99 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import ChatBox from '../components/ChatBox'
-import DocumentList from '../components/DocumentList'
-import DocumentUploader from '../components/DocumentUploader'
-import SourceCard from '../components/SourceCard'
-import { api } from '../services/api'
+import { useMemo, useState } from 'react'
 
-const quickActions = [
-  'Tóm tắt tài liệu này',
-  'Rút ra các ý chính',
-  'So sánh các nguồn',
-  'Tìm rủi ro hoặc điểm bất thường',
-]
+const templates = ['Tổng quan tài liệu','Tóm tắt chuyên sâu','Rút trích luận điểm','Bản đồ tư duy','Bài kiểm tra','Flashcards','Giải thích thuật ngữ','So sánh nhiều nguồn','Trả lời có trích dẫn','Bảng dữ liệu']
+
+const seed = {
+  p1: {
+    name: 'AI Research Sprint',
+    docs: [
+      { id: 'd1', name: 'transformer-paper.pdf', status: 'indexed', selected: true },
+      { id: 'd2', name: 'rag-evaluation.pdf', status: 'processing', selected: true },
+      { id: 'd3', name: 'reasoning-benchmarks.pdf', status: 'indexed', selected: false },
+    ],
+    chat: [{ role: 'assistant', content: 'Chào bạn! Hãy chọn nguồn và đặt câu hỏi để bắt đầu phân tích.', citations: [] }],
+    notes: [{ id: 'n1', title: 'Ý tưởng chính', content: 'So sánh kiến trúc và chi phí suy luận giữa các hướng tiếp cận.' }],
+  },
+  p2: { name: 'Thesis Workspace', docs: [], chat: [], notes: [] },
+}
 
 export default function ResearchPage() {
-  const { docId } = useParams()
-  const navigate = useNavigate()
-  const [documents, setDocuments] = useState([])
-  const [messages, setMessages] = useState([])
-  const [input, setInput] = useState('')
-  const [sources, setSources] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [mobilePane, setMobilePane] = useState('chat')
+  const [projects, setProjects] = useState(seed)
+  const [activeId, setActiveId] = useState('p1')
+  const [query, setQuery] = useState('')
+  const [message, setMessage] = useState('')
+  const [dragging, setDragging] = useState(false)
 
-  const selectedDoc = useMemo(
-    () => documents.find((doc) => String(doc.id || doc.doc_id) === String(docId)),
-    [documents, docId],
-  )
+  const active = projects[activeId]
+  const selectedCount = active.docs.filter((d) => d.selected).length
+  const filteredDocs = useMemo(() => active.docs.filter((d) => d.name.toLowerCase().includes(query.toLowerCase())), [active.docs, query])
 
-  useEffect(() => {
-    api.listPapers().then((d) => setDocuments(d?.papers || [])).catch(console.error)
-  }, [])
+  const patchActive = (next) => setProjects((p) => ({ ...p, [activeId]: { ...p[activeId], ...next } }))
 
-  const sendQuestion = async (text = input) => {
-    if (!docId || docId === 'new') return
-    const question = text.trim()
-    if (!question || loading) return
-    setError('')
-    setInput('')
-    setMessages((v) => [...v, { role: 'user', content: question }])
-    setLoading(true)
-    try {
-      const r = await api.ask(docId, question)
-      setMessages((v) => [...v, { role: 'assistant', content: r?.answer || 'Không có câu trả lời phù hợp.' }])
-      setSources(Array.isArray(r?.citations) ? r.citations : [])
-      setMobilePane('sources')
-    } catch (err) {
-      setError(err.message || 'Không thể gửi câu hỏi tới hệ thống.')
-    } finally {
-      setLoading(false)
-    }
+  const send = () => {
+    const text = message.trim()
+    if (!text || selectedCount === 0) return
+    const citations = active.docs.filter((d) => d.selected).slice(0, 2).map((d, i) => ({ id: d.id, n: i + 1, name: d.name }))
+    patchActive({
+      chat: [
+        ...active.chat,
+        { role: 'user', content: text, citations: [] },
+        { role: 'assistant', content: `Dựa trên ${selectedCount} nguồn đã chọn, đây là phân tích cô đọng cho: "${text}".`, citations },
+      ],
+    })
+    setMessage('')
+  }
+
+  const saveNote = (content) => patchActive({ notes: [{ id: crypto.randomUUID(), title: 'Ghi chú từ AI', content }, ...active.notes] })
+
+  const toggleDoc = (id) => patchActive({ docs: active.docs.map((d) => (d.id === id ? { ...d, selected: !d.selected } : d)) })
+  const toggleAll = (checked) => patchActive({ docs: active.docs.map((d) => ({ ...d, selected: checked })) })
+
+  const reorderNote = (from, to) => {
+    const arr = [...active.notes]
+    const [item] = arr.splice(from, 1)
+    arr.splice(to, 0, item)
+    patchActive({ notes: arr })
   }
 
   return (
-    <div className="research-page">
-      <div className="mobile-switcher card-glass">
-        <button className={mobilePane === 'docs' ? 'is-active' : ''} onClick={() => setMobilePane('docs')}>Tài liệu</button>
-        <button className={mobilePane === 'chat' ? 'is-active' : ''} onClick={() => setMobilePane('chat')}>Chat AI</button>
-        <button className={mobilePane === 'sources' ? 'is-active' : ''} onClick={() => setMobilePane('sources')}>Nguồn</button>
-      </div>
-
-      <aside className={`left-panel card-glass mobile-pane ${mobilePane === 'docs' ? 'show-pane' : ''}`}>
-        <Link to="/" className="brand">AI Research Notebook</Link>
-        <p className="muted">Knowledge workspace cho nghiên cứu học thuật.</p>
-        <button className="new-notebook" onClick={() => navigate('/research/new')}>+ Tạo phiên nghiên cứu mới</button>
-
-        <DocumentUploader
-          onSuccess={(doc) => {
-            setDocuments((prev) => [doc, ...prev])
-            const newId = doc?.id || doc?.doc_id
-            if (newId) navigate(`/research/${newId}`)
-          }}
-        />
-
-        <DocumentList
-          documents={documents}
-          selectedId={docId}
-          onSelect={(id) => {
-            navigate(`/research/${id}`)
-            setMobilePane('chat')
-          }}
-          onDelete={async (id) => {
-            await api.deletePaper(id)
-            setDocuments((prev) => prev.filter((item) => (item.id || item.doc_id) !== id))
-          }}
-        />
-      </aside>
-
-      <main className={`main-panel card-glass mobile-pane ${mobilePane === 'chat' ? 'show-pane' : ''}`}>
-        <header className="workspace-header">
-          <h2>{selectedDoc?.title || selectedDoc?.filename || 'Notebook nghiên cứu mới'}</h2>
-          <p>{selectedDoc ? 'Hỏi AI dựa trên tài liệu của bạn. Câu trả lời ưu tiên trích dẫn nguồn.' : 'Tải lên một tài liệu PDF để bắt đầu notebook nghiên cứu.'}</p>
-        </header>
-
-        <div className="quick-actions">
-          {quickActions.map((action) => (
-            <button key={action} onClick={() => setInput(action)}>{action}</button>
-          ))}
+    <div className="agent-root">
+      <header className="topbar glass">
+        <div className="left-actions">
+          <span className="logo">◉</span>
+          <select value={activeId} onChange={(e) => setActiveId(e.target.value)}>{Object.entries(projects).map(([id, p]) => <option key={id} value={id}>{p.name}</option>)}</select>
+          <input value={active.name} onChange={(e) => setProjects((p) => ({ ...p, [activeId]: { ...p[activeId], name: e.target.value } }))} />
         </div>
+        <div className="right-actions">
+          <button>＋ Tạo đoạn chat mới</button><button>Số liệu phân tích</button><button>Cài đặt</button><span className="avatar">U</span>
+        </div>
+      </header>
 
-        <ChatBox
-          messages={messages}
-          value={input}
-          onChange={setInput}
-          onSubmit={() => sendQuestion()}
-          loading={loading}
-          error={error}
-          disabled={!selectedDoc}
-          sourcesCount={sources.length}
-        />
+      <main className="agent-grid">
+        <section className="panel source-panel">
+          <div className="panel-header"><h3>Nguồn</h3></div>
+          <button className="pill">+ Thêm nguồn</button>
+          <div className="search-wrap"><span>⌕</span><input placeholder="Tìm nguồn..." value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+          <label className="checkline"><input type="checkbox" checked={selectedCount === active.docs.length && active.docs.length > 0} onChange={(e) => toggleAll(e.target.checked)} /> Chọn tất cả</label>
+          <small>{selectedCount} nguồn được chọn</small>
+          <div className={`dropzone ${dragging ? 'dragging' : ''}`} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(e) => { e.preventDefault(); setDragging(false) }}>
+            Drop files here
+          </div>
+          <div className="scroll-zone">{filteredDocs.map((d) => <article key={d.id} className="doc-card"><label><input type="checkbox" checked={d.selected} onChange={() => toggleDoc(d.id)} /> {d.name}</label><em>{d.status}</em></article>)}</div>
+        </section>
+
+        <section className="panel chat-panel">
+          <div className="panel-header center-title"><h2>CUỘC TRÒ CHUYỆN</h2></div>
+          <div className="scroll-zone chat-zone">{active.chat.map((m, i) => <div key={i} className={`bubble ${m.role}`}><p>{m.content}</p>{m.citations?.length > 0 && <div className="cite-row">{m.citations.map((c) => <button key={c.id} className="cite-pill">[{c.n}]</button>)}</div>}{m.role === 'assistant' && <button className="save-note" onClick={() => saveNote(m.content)}>Lưu vào ghi chú</button>}</div>)}</div>
+          <div className="composer glass"><textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Đặt câu hỏi hoặc tạo nội dung" onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }} /><div><span>{selectedCount} nguồn</span><button onClick={send} className={message.trim() ? 'active' : ''}>➤</button></div></div>
+        </section>
+
+        <section className="panel studio-panel">
+          <div className="panel-header"><h3>Studio</h3></div>
+          <div className="template-grid">{templates.map((t) => <button key={t} className="template">{t} <span>›</span></button>)}</div>
+          <h4>Ghi chú</h4>
+          <div className="scroll-zone">{active.notes.length === 0 ? <p>Đầu ra của Studio sẽ được lưu ở đây.</p> : active.notes.map((n, i) => <article key={n.id} className="note" draggable onDragStart={(e) => e.dataTransfer.setData('idx', String(i))} onDragOver={(e) => e.preventDefault()} onDrop={(e) => reorderNote(Number(e.dataTransfer.getData('idx')), i)}><strong>{n.title}</strong><p>{n.content}</p></article>)}</div>
+        </section>
       </main>
-
-      <aside className={`right-panel card-glass mobile-pane ${mobilePane === 'sources' ? 'show-pane' : ''}`}>
-        <h3>Nguồn tham chiếu</h3>
-        <p className="muted">Citation-first answers cho từng phản hồi của AI.</p>
-        {!sources.length ? (
-          <p className="muted">Chưa có nguồn. Hãy gửi câu hỏi để AI tìm các đoạn liên quan trong tài liệu.</p>
-        ) : (
-          sources.map((source, idx) => <SourceCard key={source.chunk_id || idx} source={source} />)
-        )}
-      </aside>
     </div>
   )
 }
