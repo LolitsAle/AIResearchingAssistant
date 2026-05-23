@@ -37,7 +37,6 @@ export default function ResearchPage() {
     if (!docId || docId === 'new') return
     const question = text.trim()
     if (!question || loading) return
-
     setError('')
     setInput('')
     setMessages((v) => [...v, { role: 'user', content: question }])
