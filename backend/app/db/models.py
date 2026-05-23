@@ -1,67 +1,63 @@
-import uuid
 from datetime import datetime
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import relationship
+import uuid
+
+from sqlalchemy import DateTime, ForeignKey, Integer, Text, String
+from sqlalchemy.orm import Mapped, mapped_column
+
 from app.db.database import Base
 
 
-def uid():
+def uid() -> str:
     return str(uuid.uuid4())
 
 
 class Paper(Base):
     __tablename__ = 'papers'
-    id = Column(String, primary_key=True, default=uid)
-    title = Column(String, nullable=False)
-    filename = Column(String, nullable=False)
-    file_path = Column(String, nullable=False)
-    page_count = Column(Integer, default=0)
-    chunk_count = Column(Integer, default=0)
-    status = Column(String, default='uploaded')
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    chunks = relationship('PaperChunk', back_populates='paper', cascade='all, delete-orphan')
-    summary = relationship('PaperSummary', back_populates='paper', uselist=False, cascade='all, delete-orphan')
-    chats = relationship('ChatMessage', back_populates='paper', cascade='all, delete-orphan')
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    title: Mapped[str] = mapped_column(String)
+    filename: Mapped[str] = mapped_column(String)
+    file_path: Mapped[str] = mapped_column(String)
+    page_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String, default='indexed')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class PaperChunk(Base):
     __tablename__ = 'paper_chunks'
-    id = Column(String, primary_key=True, default=uid)
-    paper_id = Column(String, ForeignKey('papers.id'), nullable=False)
-    section = Column(String, default='Unknown')
-    page_start = Column(Integer, default=1)
-    page_end = Column(Integer, default=1)
-    content = Column(Text, nullable=False)
-    chunk_index = Column(Integer, nullable=False)
-    embedding_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    paper = relationship('Paper', back_populates='chunks')
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    paper_id: Mapped[str] = mapped_column(ForeignKey('papers.id', ondelete='CASCADE'))
+    section: Mapped[str] = mapped_column(String, default='Unknown')
+    page_start: Mapped[int] = mapped_column(Integer, default=1)
+    page_end: Mapped[int] = mapped_column(Integer, default=1)
+    content: Mapped[str] = mapped_column(Text)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    embedding_json: Mapped[str] = mapped_column(Text, default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class PaperSummary(Base):
     __tablename__ = 'paper_summaries'
-    id = Column(String, primary_key=True, default=uid)
-    paper_id = Column(String, ForeignKey('papers.id'), unique=True, nullable=False)
-    short_summary = Column(Text, default='')
-    detailed_summary = Column(Text, default='')
-    research_problem = Column(Text, default='')
-    methodology = Column(Text, default='')
-    main_contributions_json = Column(Text, default='[]')
-    key_ideas_json = Column(Text, default='[]')
-    results_json = Column(Text, default='[]')
-    limitations_json = Column(Text, default='[]')
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    paper = relationship('Paper', back_populates='summary')
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    paper_id: Mapped[str] = mapped_column(ForeignKey('papers.id', ondelete='CASCADE'), unique=True)
+    short_summary: Mapped[str] = mapped_column(Text, default='')
+    detailed_summary: Mapped[str] = mapped_column(Text, default='')
+    research_problem: Mapped[str] = mapped_column(Text, default='')
+    methodology: Mapped[str] = mapped_column(Text, default='')
+    main_contributions_json: Mapped[str] = mapped_column(Text, default='[]')
+    key_ideas_json: Mapped[str] = mapped_column(Text, default='[]')
+    results_json: Mapped[str] = mapped_column(Text, default='[]')
+    limitations_json: Mapped[str] = mapped_column(Text, default='[]')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ChatMessage(Base):
     __tablename__ = 'chat_messages'
-    id = Column(String, primary_key=True, default=uid)
-    paper_id = Column(String, ForeignKey('papers.id'), nullable=False)
-    role = Column(String, nullable=False)
-    content = Column(Text, nullable=False)
-    citations_json = Column(Text, default='[]')
-    created_at = Column(DateTime, default=datetime.utcnow)
-    paper = relationship('Paper', back_populates='chats')
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    paper_id: Mapped[str] = mapped_column(ForeignKey('papers.id', ondelete='CASCADE'))
+    role: Mapped[str] = mapped_column(String)
+    content: Mapped[str] = mapped_column(Text)
+    citations_json: Mapped[str] = mapped_column(Text, default='[]')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

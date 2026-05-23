@@ -1,22 +1,22 @@
-def chunk_pages(pages: list[dict], chunk_words: int = 1100, overlap_words: int = 120):
+def chunk_pages(pages: list[dict], chunk_size: int = 1200, overlap: int = 200) -> list[dict]:
     chunks = []
     idx = 0
-    for p in pages:
-        words = p['text'].split()
+    for page in pages:
+        words = page['text'].split()
         start = 0
         while start < len(words):
-            end = min(len(words), start + chunk_words)
-            content = ' '.join(words[start:end])
+            end = min(len(words), start + chunk_size)
+            content = ' '.join(words[start:end]).strip()
             if content:
                 chunks.append({
                     'chunk_index': idx,
-                    'section': p.get('section') or f"Page {p['page']}",
-                    'page_start': p['page'],
-                    'page_end': p['page'],
+                    'section': page.get('section', 'Unknown'),
+                    'page_start': page['page'],
+                    'page_end': page['page'],
                     'content': content,
                 })
                 idx += 1
-            if end == len(words):
+            if end >= len(words):
                 break
-            start = max(0, end - overlap_words)
+            start = max(0, end - overlap)
     return chunks

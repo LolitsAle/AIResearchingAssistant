@@ -1,26 +1,29 @@
 import httpx
+
 from app.core.config import settings
-
-# Có thể giữ lại hoặc xóa biến này, nhưng trong hàm generate_text ta sẽ không dùng nó nữa
-TIMEOUT = 90.0 
-
-async def health_check() -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=None) as client:
-            r = await client.get(f"{settings.ollama_base_url}/api/tags")
-            return r.status_code == 200
-    except Exception:
-        return False
+from app.core.errors import AppError
 
 
-async def generate_text(prompt: str) -> str:
-    payload = {'model': settings.ollama_chat_model, 'prompt': prompt, 'stream': False}
-    
-    # SỬA TẠI ĐÂY: Thay timeout=TIMEOUT bằng timeout=None để cho phép đợi vô hạn
-    async with httpx.AsyncClient(timeout=None) as client:
-        r = await client.post(f"{settings.ollama_base_url}/api/generate", json=payload)
-        
-    if r.status_code != 200:
-        raise RuntimeError('Ollama is not available. Please start Ollama and pull the configured model.')
-        
-    return r.json().get('response', '').strip()
+class OllamaService:
+    def __init__(self):
+        self.base_url = settings.ollama_base_url.rstrip('/')
+        self.chat_model = settings.ollama_chat_model
+
+    def health(self) -> str:
+        try:
+            r = httpx.get(f'{self.base_url}/api/tags', timeout=5)
+            return 'available' if r.status_code == 200 else 'unavailable'
+        except Exception:
+            return 'unavailable'
+
+    def generate_text(self, prompt: str) -> str:
+        payload = {'model': self.chat_model, 'prompt': prompt, 'stream': False}
+        try:
+            r = httpx.post(f'{self.base_url}/api/generate', json=payload, timeout=120)
+            r.raise_for_status()
+            return r.json().get('response', '').strip()
+        except Exception as exc:
+            raise AppError('Ollama is not available. Please start Ollama and pull the configured model.', 503) from exc
+
+
+ollama_service = OllamaService()

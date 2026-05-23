@@ -15,13 +15,9 @@ class PaperOut(BaseModel):
         from_attributes = True
 
 
-class AskRequest(BaseModel):
-    question: str
+class UploadResponse(BaseModel):
+    paper: PaperOut
 
 
-class ExplainTermRequest(BaseModel):
-    term: str
-
-
-class CompareRequest(BaseModel):
-    paper_ids: list[str]
+class ListPapersResponse(BaseModel):
+    papers: list[PaperOut]
