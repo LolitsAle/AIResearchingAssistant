@@ -60,7 +60,7 @@ export default function ResearchPage() {
   }
 
   useEffect(() => {
-    const init = async () => {
+    (async () => {
       try {
         const settings = await api.getSettings()
         if (settings?.accent_color) {
