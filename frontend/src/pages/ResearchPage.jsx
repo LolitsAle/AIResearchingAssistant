@@ -1,118 +1,68 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '../services/api'
+import { useEffect, useRef, useState } from 'react'
 
-const templates = ['Tổng quan tài liệu', 'Tóm tắt chuyên sâu', 'Rút trích luận điểm', 'Bản đồ tư duy']
+const DOCUMENTS = [
+  { id: 1, name: 'Attention Is All You Need', type: 'PDF', size: '1.2 MB', date: 'May 20', pages: 15, active: true },
+  { id: 2, name: 'BERT: Pre-training of Deep Bidirectional Transformers', type: 'PDF', size: '980 KB', date: 'May 19', pages: 16, active: false },
+  { id: 3, name: 'GPT-4 Technical Report', type: 'PDF', size: '2.1 MB', date: 'May 18', pages: 100, active: false },
+  { id: 4, name: 'Chain-of-Thought Prompting', type: 'PDF', size: '654 KB', date: 'May 17', pages: 12, active: false },
+  { id: 5, name: 'LLaMA 2: Open Foundation Models', type: 'PDF', size: '3.4 MB', date: 'May 16', pages: 77, active: false },
+]
+
+const INITIAL_MESSAGES = [
+  { id: 1, role: 'assistant', content: 'Xin chào! Tôi là trợ lý nghiên cứu AI của bạn. Tôi đã phân tích 5 tài liệu trong thư viện của bạn. Bạn muốn khám phá chủ đề nào hôm nay?', timestamp: '10:24 SA', sources: [] },
+  { id: 2, role: 'user', content: 'Cơ chế attention trong Transformer hoạt động như thế nào? Giải thích chi tiết về scaled dot-product attention.', timestamp: '10:25 SA' },
+  { id: 3, role: 'assistant', content: 'Scaled dot-product attention là trái tim của kiến trúc Transformer. Cơ chế này hoạt động theo ba bước chính:\n\n**1. Tạo Queries, Keys và Values**\nTừ vector đầu vào, mô hình học ba ma trận chiếu (W_Q, W_K, W_V) để tạo ra Q, K, V tương ứng.\n\n**2. Tính Attention Scores**\nĐiểm attention được tính bằng tích vô hướng của Q và K, sau đó chia cho √d_k để ổn định gradient:\n\nAttention(Q, K, V) = softmax(QK^T / √d_k) · V\n\n**3. Weighted Sum**\nSau khi qua softmax, các trọng số được nhân với V để tạo ra đầu ra cuối cùng.', timestamp: '10:25 SA', sources: [1, 2] },
+]
+
+const SOURCE_CARDS = [
+  { id: 1, title: 'Attention Is All You Need', authors: 'Vaswani et al., 2017', excerpt: 'Scaled dot-product attention computes the dot products of the query with all keys, divide each by √d_k, and apply a softmax function.', page: 4, relevance: 98, color: '#6366f1' },
+  { id: 2, title: 'BERT: Pre-training of Deep Bidirectional Transformers', authors: 'Devlin et al., 2019', excerpt: 'BERT uses bidirectional self-attention, while the GPT language model uses constrained self-attention where every token can only attend to context to its left.', page: 3, relevance: 84, color: '#8b5cf6' },
+  { id: 3, title: 'GPT-4 Technical Report', authors: 'OpenAI, 2023', excerpt: 'The architecture follows the transformer architecture with some modifications including pre-normalization using RMSNorm.', page: 7, relevance: 71, color: '#06b6d4' },
+]
+
+function DocumentItem({ doc, onToggle, onDismiss }) {
+  return <div onClick={() => onToggle(doc.id)} className={`doc-card ${doc.active ? 'is-highlight' : ''}`}><label><span>📄</span>{doc.name}</label><button type="button" className="doc-delete" onClick={(e) => { e.stopPropagation(); onDismiss(doc.id) }}>×</button></div>
+}
+
+function ChatMessage({ message }) {
+  const isAssistant = message.role === 'assistant'
+  return <div className={`bubble ${message.role}`}><p style={{ fontFamily: "'Lora', serif" }}>{message.content}</p><div className="message-actions"><span className="font-mono text-[10px] text-muted-foreground/60">{message.timestamp}</span>{isAssistant && message.sources?.length > 0 && message.sources.map((s) => <span key={s} className="cite-pill">[{s}]</span>)}</div></div>
+}
+
+function SourceCard({ card, onDismiss }) {
+  const [expanded, setExpanded] = useState(false)
+  return <div className="source-card" onClick={() => setExpanded((v) => !v)} style={{ borderLeftColor: card.color, borderLeftWidth: 2 }}><header><h4 style={{ fontFamily: "'Lora', serif" }}>{card.title}</h4><span className="page-badge" style={{ backgroundColor: `${card.color}20`, color: card.color }}>{card.relevance}%</span></header><div className="source-doc">{card.authors}</div><p style={{ WebkitLineClamp: expanded ? 'unset' : 3 }}>{card.excerpt}</p><div className="source-footer"><span className="source-score">Trang {card.page}</span><button type="button" className="source-open" onClick={(e) => { e.stopPropagation(); onDismiss(card.id) }}>Bỏ ↗</button></div></div>
+}
 
 export default function ResearchPage() {
-  const fileRef = useRef(null)
-  const [workspaces, setWorkspaces] = useState([])
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState('')
-  const [workspaceName, setWorkspaceName] = useState('')
-  const [documents, setDocuments] = useState([])
-  const [selectedDocumentIds, setSelectedDocumentIds] = useState([])
-  const [messages, setMessages] = useState([])
-  const [notes, setNotes] = useState([])
-  const [message, setMessage] = useState('')
-  const [query, setQuery] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [analytics, setAnalytics] = useState(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const [accent, setAccent] = useState('#6d5dfc')
+  const [documents, setDocuments] = useState(DOCUMENTS)
+  const [sourceCards, setSourceCards] = useState(SOURCE_CARDS)
+  const [messages, setMessages] = useState(INITIAL_MESSAGES)
+  const [inputValue, setInputValue] = useState('')
+  const [isDragging, setIsDragging] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [isTyping, setIsTyping] = useState(false)
+  const messagesEndRef = useRef(null)
 
-  const selectedCount = selectedDocumentIds.length
-  const filteredDocs = useMemo(() => documents.filter((d) => (d.filename || d.title || '').toLowerCase().includes(query.toLowerCase())), [documents, query])
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isTyping])
 
-  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
+  const filteredDocs = documents.filter((d) => d.name.toLowerCase().includes(searchQuery.toLowerCase()))
+  const activeCount = documents.filter((d) => d.active).length
 
-  const loadWorkspaceData = async (workspaceId) => {
-    const [sources, chat, noteData] = await Promise.all([
-      api.getWorkspaceSources(workspaceId),
-      api.getWorkspaceChat(workspaceId),
-      api.getNotes(workspaceId),
-    ])
-    setDocuments(sources.documents || [])
-    setSelectedDocumentIds(sources.selected_document_ids || [])
-    setMessages(chat.messages || [])
-    setNotes(noteData.notes || [])
+  const sendMessage = () => {
+    if (!inputValue.trim()) return
+    const userMsg = { id: Date.now(), role: 'user', content: inputValue.trim(), timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) }
+    setMessages((prev) => [...prev, userMsg])
+    setInputValue('')
+    setIsTyping(true)
+    setTimeout(() => {
+      const aiMsg = { id: Date.now() + 1, role: 'assistant', content: 'Đây là một câu hỏi thú vị. Dựa trên các tài liệu bạn đã tải lên, tôi có thể cung cấp phân tích chi tiết về chủ đề này. Hãy để tôi tổng hợp thông tin từ nhiều nguồn khác nhau trong thư viện của bạn...', timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }), sources: [1, 3] }
+      setIsTyping(false)
+      setMessages((prev) => [...prev, aiMsg])
+    }, 1800)
   }
 
-  useEffect(() => {
-    const init = async () => {
-      try {
-        setError('')
-        await api.getHealth()
-        const s = await api.getSettings()
-        const savedAccent = s?.accent_color || localStorage.getItem('accent_color') || '#6d5dfc'
-        setAccent(savedAccent)
-        document.documentElement.style.setProperty('--accent', savedAccent)
-        const wsData = await api.getWorkspaces()
-        let list = wsData.workspaces || []
-        if (!list.length) {
-          const created = await api.createWorkspace({ name: 'Workspace mới' })
-          list = [created]
-        }
-        setWorkspaces(list)
-        setActiveWorkspaceId(list[0].id)
-        setWorkspaceName(list[0].name)
-        await loadWorkspaceData(list[0].id)
-      } catch (err) {
-        setError(err.message)
-      }
-    }
-    init()
-  }, [])
-
-  const onWorkspaceChange = async (id) => {
-    setActiveWorkspaceId(id)
-    const next = workspaces.find((w) => w.id === id)
-    setWorkspaceName(next?.name || '')
-    try { await loadWorkspaceData(id) } catch (err) { setError(err.message) }
-  }
-
-  const onUpload = async (file) => {
-    if (!activeWorkspaceId || !file) return
-    console.debug('[UI] upload clicked')
-    try {
-      setError('')
-      await api.uploadDocument(activeWorkspaceId, file)
-      await loadWorkspaceData(activeWorkspaceId)
-    } catch (err) { setError(err.message) }
-  }
-
-  const updateSelection = async (ids) => {
-    setSelectedDocumentIds(ids)
-    try { await api.updateSourceSelection(activeWorkspaceId, ids) } catch (err) { setError(err.message) }
-  }
-
-  const toggleDoc = (id) => updateSelection(selectedDocumentIds.includes(id) ? selectedDocumentIds.filter((x) => x !== id) : [...selectedDocumentIds, id])
-  const toggleAll = (checked) => updateSelection(checked ? documents.map((d) => d.id) : [])
-
-  const send = async () => {
-    const text = message.trim()
-    if (!text || !activeWorkspaceId || selectedCount === 0) return
-    const payload = { message: text, selected_document_ids: selectedDocumentIds }
-    console.debug('[UI] sending message', payload)
-    setLoading(true)
-    setError('')
-    setMessages((prev) => [...prev, { role: 'user', content: text, citations: [] }])
-    try {
-      const data = await api.sendWorkspaceMessage(activeWorkspaceId, payload)
-      setMessages((prev) => [...prev, { role: 'assistant', content: data.answer, citations: data.citations || [] }])
-      setMessage('')
-    } catch (err) { setError(err.message) } finally { setLoading(false) }
-  }
-
-  const onNewChat = async () => { try { await api.createNewChat(activeWorkspaceId); setMessages([]) } catch (err) { setError(err.message) } }
-  const onSaveNote = async (content) => { try { const n = await api.createNote(activeWorkspaceId, { title: 'Ghi chú từ AI', content }); setNotes((p) => [n, ...p]) } catch (err) { setError(err.message) } }
-  const onRunStudio = async (template) => { try { const r = await api.runStudioTemplate(activeWorkspaceId, { template, selected_document_ids: selectedDocumentIds }); setNotes((p) => [{ title: r.title, content: r.content, id: crypto.randomUUID() }, ...p]) } catch (err) { setError(err.message) } }
-  const onAnalytics = async () => { setAnalyticsOpen(true); try { setAnalytics(await api.getAnalytics(activeWorkspaceId)) } catch (err) { setError(err.message) } }
-  const onSaveSettings = async () => {
-    document.documentElement.style.setProperty('--accent', accent)
-    localStorage.setItem('accent_color', accent)
-    try { await api.updateSettings({ accent_color: accent }); setSettingsOpen(false) } catch (err) { setError(`${err.message} (đã lưu local)`); setSettingsOpen(false) }
-  }
-
-  return <div className="agent-root"><header className="topbar"><div className="left-actions"><span className="logo">◉</span><select value={activeWorkspaceId} onChange={(e) => onWorkspaceChange(e.target.value)}>{workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select><input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} onBlur={async () => { try { const updated = await api.updateWorkspace(activeWorkspaceId, { name: workspaceName }); setWorkspaces((prev) => prev.map((w) => w.id === activeWorkspaceId ? updated : w)) } catch (err) { setError(err.message) } }} /></div><div className="right-actions"><button onClick={onNewChat}>＋ Tạo đoạn chat mới</button><button onClick={onAnalytics}>Số liệu phân tích</button><button onClick={() => setSettingsOpen(true)}>Cài đặt</button><span className="avatar">U</span></div></header><main className="agent-grid"><section className="panel source-panel"><div className="panel-header"><h3>Nguồn</h3></div><input ref={fileRef} hidden type="file" accept="application/pdf,.pdf" onChange={(e) => onUpload(e.target.files?.[0])} /><button className="pill" onClick={() => fileRef.current?.click()}>＋ Thêm nguồn</button><div className="search-wrap"><input placeholder="Tìm nguồn..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><label className="checkline"><input type="checkbox" checked={selectedCount > 0 && selectedCount === documents.length} onChange={(e) => toggleAll(e.target.checked)} />Chọn tất cả</label><small>{selectedCount} nguồn được chọn</small><div className="scroll-zone">{filteredDocs.map((d) => <article key={d.id} className="doc-card"><label><input type="checkbox" checked={selectedDocumentIds.includes(d.id)} onChange={() => toggleDoc(d.id)} />{d.filename || d.title}</label><button onClick={async () => { try { await api.deleteDocument(d.id); await loadWorkspaceData(activeWorkspaceId) } catch (err) { setError(err.message) } }}>Xóa</button></article>)}</div></section><section className="panel chat-panel"><div className="panel-header center-title"><h2>Cuộc Trò Chuyện</h2></div><div className="chat-zone scroll-zone">{messages.map((m, i) => <div key={i} className={`bubble ${m.role}`}><p>{m.content}</p>{m.role === 'assistant' && <button className="save-note" onClick={() => onSaveNote(m.content)}>Lưu vào ghi chú</button>}</div>)}</div><div className="composer"><textarea value={message} onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }} /><div><span>{selectedCount} nguồn</span><button className="send-btn" disabled={loading || !message.trim() || selectedCount === 0} onClick={send}>➤</button></div></div></section><section className="panel studio-panel"><div className="panel-header"><h3>Studio</h3></div><div className="template-grid">{templates.map((t) => <button key={t} className="template" onClick={() => onRunStudio(t)}>{t}<span>›</span></button>)}</div><h4 style={{ marginTop: '10px' }}>Ghi chú</h4><div className="scroll-zone">{notes.map((n) => <article key={n.id} className="note"><strong>{n.title}</strong><p>{n.content}</p><button onClick={async () => { try { await api.deleteNote(n.id); setNotes((prev) => prev.filter((x) => x.id !== n.id)) } catch (err) { setError(err.message) } }}>Xóa</button></article>)}</div></section></main>{error && <div className="chat-error" style={{ margin: 12 }}>{error}</div>}{settingsOpen && <div className="panel" style={{ position: 'fixed', top: '20%', left: '35%', right: '35%', zIndex: 100 }}><h3>Cài đặt</h3><input value={accent} onChange={(e) => setAccent(e.target.value)} /><button onClick={onSaveSettings}>Lưu</button><button onClick={() => setSettingsOpen(false)}>Đóng</button></div>}{analyticsOpen && <div className="panel" style={{ position: 'fixed', top: '18%', left: '30%', right: '30%', zIndex: 100 }}><h3>Analytics</h3><pre>{JSON.stringify(analytics, null, 2)}</pre><button onClick={() => setAnalyticsOpen(false)}>Đóng</button></div>}</div>
+  return <div className="agent-root"><div className="agent-grid" style={{ height: '100vh' }}><aside className="panel" style={{ width: '20%', minWidth: 200, borderRight: '1px solid var(--border)' }}><div className="panel-header"><h3>ResearchAI · {activeCount} tài liệu</h3></div><div className="search-wrap"><span className="search-icon">⌕</span><input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Tìm tài liệu..." /></div><div className="scroll-zone">{filteredDocs.map((doc) => <DocumentItem key={doc.id} doc={doc} onToggle={(id) => setDocuments((prev) => prev.map((d) => d.id === id ? { ...d, active: !d.active } : d))} onDismiss={(id) => setDocuments((prev) => prev.filter((d) => d.id !== id))} />)}</div><div className={`dropzone ${isDragging ? 'dragging' : ''}`} onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)} onDrop={(e) => { e.preventDefault(); setIsDragging(false) }}><span className="drop-icon">⤴</span>Tải tài liệu lên<br /><small>PDF, DOCX, TXT · Tối đa 50MB</small></div></aside>
+  <main className="chat-panel" style={{ width: '55%', borderRight: '1px solid var(--border)' }}><div className="panel-header center-title"><h2>CUỘC TRÒ CHUYỆN</h2><p className="source-hint">● {activeCount} tài liệu · Phiên #123</p></div><div className="chat-zone">{messages.map((m) => <ChatMessage key={m.id} message={m} />)}{isTyping && <div className="bubble assistant"><p>● ● ●</p></div>}<div ref={messagesEndRef} /></div><div className="composer"><textarea value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }} placeholder="Đặt câu hỏi về tài liệu của bạn..." /><div><span>Enter để gửi · Shift+Enter xuống dòng</span><button type="button" className={`send-btn ${inputValue.trim() && !isTyping ? 'active' : ''}`} onClick={sendMessage}>➤</button></div></div></main>
+  <aside className="panel" style={{ width: '25%', minWidth: 220 }}><div className="panel-header"><h3>Nguồn tham chiếu ({sourceCards.length})</h3></div><div className="source-hint">Độ liên quan</div><div className="scroll-zone">{sourceCards.map((card) => <SourceCard key={card.id} card={card} onDismiss={(id) => setSourceCards((prev) => prev.filter((c) => c.id !== id))} />)}<div className="note"><strong>Tóm tắt phiên</strong><p>Cuộc trò chuyện này đã đề cập đến cơ chế attention, multi-head attention, và kiến trúc Transformer.</p></div></div><div className="source-footer"><span className="source-score">Câu hỏi: {messages.filter((m) => m.role === 'user').length}</span><span className="source-score">Nguồn: {sourceCards.length}</span><span className="source-score">Tài liệu: {activeCount}</span></div></aside></div></div>
 }
