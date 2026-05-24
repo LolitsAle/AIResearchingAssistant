@@ -6,20 +6,20 @@
 /* ── Token Layer ── */
 :root {
   /* Backgrounds */
-  --bg:          #0d0f13;
-  --surface-1:   #13161c;
-  --surface-2:   #181c24;
-  --surface-3:   #1e232d;
-  --surface-4:   #252b38;
+  --bg:          #16161a;
+  --surface-1:   #1e1e24;
+  --surface-2:   #1e1e24;
+  --surface-3:   #252530;
+  --surface-4:   #2b2b38;
 
   /* Borders */
   --border:      rgba(255, 255, 255, 0.07);
   --border-hover:rgba(255, 255, 255, 0.14);
 
   /* Text */
-  --text:        #edf0f7;
-  --text-2:      #8b95a8;
-  --text-3:      #555f72;
+  --text:        #e8e8f0;
+  --text-2:      #c4c4d4;
+  --text-3:      #7a7a94;
 
   /* Accent */
   --accent:      #6d5dfc;
@@ -32,8 +32,8 @@
   --err:         #f26c6c;
 
   /* Type */
-  --font-sans:   'Lora', Georgia, 'Times New Roman', serif;
-  --font-serif:  'Lora', Georgia, 'Times New Roman', serif;
+  --font-sans:   'Inter', system-ui, -apple-system, sans-serif;
+  --font-serif:  'Lora', Georgia, serif;
 
   /* Motion */
   --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
