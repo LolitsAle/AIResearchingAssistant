@@ -1,3 +1,5 @@
+# @deprecated: Legacy paper-centric endpoints, UI mới không còn gọi trực tiếp.
+# TODO: Có thể xóa sau khi xác nhận không còn client nào phụ thuộc.
 import json
 
 from fastapi import APIRouter, Depends
