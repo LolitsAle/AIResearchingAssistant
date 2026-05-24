@@ -1,39 +1,64 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Toast from '../components/Toast'
 import { api } from '../services/api'
 
-const templates = ['Tổng quan tài liệu', 'Tóm tắt chuyên sâu', 'Rút trích luận điểm', 'Bản đồ tư duy']
+const STUDIO_TEMPLATES = [
+  { key: 'deep_summary', label: 'Tóm tắt chuyên sâu' },
+  { key: 'key_arguments', label: 'Rút trích luận điểm' },
+  { key: 'citation_answer', label: 'Hỏi đáp theo từng đoạn' },
+  { key: 'terminology', label: 'Giải thích thuật ngữ' },
+  { key: 'compare_sources', label: 'So sánh nhiều nguồn' },
+  { key: 'citation_answer', label: 'Trả lời có trích dẫn' },
+  { key: 'flashcards', label: 'Flashcards' },
+  { key: 'quiz', label: 'Bài kiểm tra' },
+  { key: 'data_table', label: 'Bảng dữ liệu' },
+]
+
+function IconButton({ icon, label, onClick }) {
+  return <button type="button" className="icon-btn" aria-label={label} data-tooltip={label} onClick={onClick}>{icon}</button>
+}
 
 export default function ResearchPage() {
-  const fileRef = useRef(null)
-  const [workspaces, setWorkspaces] = useState([])
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState('')
-  const [workspaceName, setWorkspaceName] = useState('')
+  const [projects, setProjects] = useState([])
+  const [activeProjectId, setActiveProjectId] = useState('')
+  const [projectName, setProjectName] = useState('')
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [documents, setDocuments] = useState([])
   const [selectedDocumentIds, setSelectedDocumentIds] = useState([])
   const [messages, setMessages] = useState([])
   const [notes, setNotes] = useState([])
-  const [message, setMessage] = useState('')
-  const [query, setQuery] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [analytics, setAnalytics] = useState(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [inputValue, setInputValue] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [activeCitationId, setActiveCitationId] = useState(null)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const [accent, setAccent] = useState('#6d5dfc')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [analytics, setAnalytics] = useState(null)
+  const [toast, setToast] = useState(null)
+  const [accentColor, setAccentColor] = useState('#6366f1')
+  const [loading, setLoading] = useState(false)
+  const [projectLoading, setProjectLoading] = useState(false)
 
-  const selectedCount = selectedDocumentIds.length
-  const filteredDocs = useMemo(() => documents.filter((d) => (d.filename || d.title || '').toLowerCase().includes(query.toLowerCase())), [documents, query])
+  const toastTimerRef = useRef(null)
+  const messagesEndRef = useRef(null)
+  const fileRef = useRef(null)
 
-  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
+  const filteredDocs = useMemo(() => documents.filter((d) => (d.title || d.filename || '').toLowerCase().includes(searchQuery.toLowerCase())), [documents, searchQuery])
+  const activeCount = selectedDocumentIds.length
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type })
+    window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 2300)
+  }
 
   const loadWorkspaceData = async (workspaceId) => {
-    const [sources, chat, noteData] = await Promise.all([
+    const [src, chat, noteData] = await Promise.all([
       api.getWorkspaceSources(workspaceId),
       api.getWorkspaceChat(workspaceId),
       api.getNotes(workspaceId),
     ])
-    setDocuments(sources.documents || [])
-    setSelectedDocumentIds(sources.selected_document_ids || [])
+    setDocuments(src.sources || [])
+    setSelectedDocumentIds(src.selected_document_ids || [])
     setMessages(chat.messages || [])
     setNotes(noteData.notes || [])
   }
@@ -41,78 +66,59 @@ export default function ResearchPage() {
   useEffect(() => {
     const init = async () => {
       try {
-        setError('')
-        await api.getHealth()
-        const s = await api.getSettings()
-        const savedAccent = s?.accent_color || localStorage.getItem('accent_color') || '#6d5dfc'
-        setAccent(savedAccent)
-        document.documentElement.style.setProperty('--accent', savedAccent)
+        setProjectLoading(true)
+        const settings = await api.getSettings()
+        if (settings?.accent_color) {
+          setAccentColor(settings.accent_color)
+          document.documentElement.style.setProperty('--accent', settings.accent_color)
+        }
         const wsData = await api.getWorkspaces()
         let list = wsData.workspaces || []
         if (!list.length) {
-          const created = await api.createWorkspace({ name: 'Workspace mới' })
-          list = [created]
+          const created = await api.createWorkspace({ name: 'Research Workspace' })
+          list = [created.workspace]
         }
-        setWorkspaces(list)
-        setActiveWorkspaceId(list[0].id)
-        setWorkspaceName(list[0].name)
-        await loadWorkspaceData(list[0].id)
+        setProjects(list)
+        const current = list[0]
+        setActiveProjectId(current.id)
+        setProjectName(current.name)
+        await loadWorkspaceData(current.id)
       } catch (err) {
-        setError(err.message)
+        showToast(err.message, 'error')
+      } finally {
+        setProjectLoading(false)
       }
     }
     init()
+    return () => window.clearTimeout(toastTimerRef.current)
   }, [])
 
-  const onWorkspaceChange = async (id) => {
-    setActiveWorkspaceId(id)
-    const next = workspaces.find((w) => w.id === id)
-    setWorkspaceName(next?.name || '')
-    try { await loadWorkspaceData(id) } catch (err) { setError(err.message) }
-  }
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
-  const onUpload = async (file) => {
-    if (!activeWorkspaceId || !file) return
-    console.debug('[UI] upload clicked')
-    try {
-      setError('')
-      await api.uploadDocument(activeWorkspaceId, file)
-      await loadWorkspaceData(activeWorkspaceId)
-    } catch (err) { setError(err.message) }
-  }
-
-  const updateSelection = async (ids) => {
-    setSelectedDocumentIds(ids)
-    try { await api.updateSourceSelection(activeWorkspaceId, ids) } catch (err) { setError(err.message) }
-  }
-
-  const toggleDoc = (id) => updateSelection(selectedDocumentIds.includes(id) ? selectedDocumentIds.filter((x) => x !== id) : [...selectedDocumentIds, id])
-  const toggleAll = (checked) => updateSelection(checked ? documents.map((d) => d.id) : [])
-
-  const send = async () => {
-    const text = message.trim()
-    if (!text || !activeWorkspaceId || selectedCount === 0) return
-    const payload = { message: text, selected_document_ids: selectedDocumentIds }
-    console.debug('[UI] sending message', payload)
+  const sendMessage = async () => {
+    const text = inputValue.trim()
+    if (!text) return showToast('Vui lòng nhập câu hỏi', 'warning')
+    if (!selectedDocumentIds.length) return showToast('Vui lòng chọn ít nhất một nguồn trước khi hỏi AI.', 'warning')
     setLoading(true)
-    setError('')
-    setMessages((prev) => [...prev, { role: 'user', content: text, citations: [] }])
+    setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, role: 'user', content: text, created_at: new Date().toISOString(), citations: [] }])
+    setInputValue('')
     try {
-      const data = await api.sendWorkspaceMessage(activeWorkspaceId, payload)
-      setMessages((prev) => [...prev, { role: 'assistant', content: data.answer, citations: data.citations || [] }])
-      setMessage('')
-    } catch (err) { setError(err.message) } finally { setLoading(false) }
+      const res = await api.sendWorkspaceMessage(activeProjectId, { message: text, selected_document_ids: selectedDocumentIds })
+      setMessages((prev) => [...prev, res.message || { id: `a-${Date.now()}`, role: 'assistant', content: res.answer, citations: res.citations || [] }])
+    } catch (err) {
+      showToast(err.message.includes('Ollama') ? 'Ollama chưa sẵn sàng. Hãy chạy ollama serve và tải model đã cấu hình.' : err.message, 'error')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const onNewChat = async () => { try { await api.createNewChat(activeWorkspaceId); setMessages([]) } catch (err) { setError(err.message) } }
-  const onSaveNote = async (content) => { try { const n = await api.createNote(activeWorkspaceId, { title: 'Ghi chú từ AI', content }); setNotes((p) => [n, ...p]) } catch (err) { setError(err.message) } }
-  const onRunStudio = async (template) => { try { const r = await api.runStudioTemplate(activeWorkspaceId, { template, selected_document_ids: selectedDocumentIds }); setNotes((p) => [{ title: r.title, content: r.content, id: crypto.randomUUID() }, ...p]) } catch (err) { setError(err.message) } }
-  const onAnalytics = async () => { setAnalyticsOpen(true); try { setAnalytics(await api.getAnalytics(activeWorkspaceId)) } catch (err) { setError(err.message) } }
-  const onSaveSettings = async () => {
-    document.documentElement.style.setProperty('--accent', accent)
-    localStorage.setItem('accent_color', accent)
-    try { await api.updateSettings({ accent_color: accent }); setSettingsOpen(false) } catch (err) { setError(`${err.message} (đã lưu local)`); setSettingsOpen(false) }
-  }
-
-  return <div className="agent-root"><header className="topbar"><div className="left-actions"><span className="logo">◉</span><select value={activeWorkspaceId} onChange={(e) => onWorkspaceChange(e.target.value)}>{workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select><input value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} onBlur={async () => { try { const updated = await api.updateWorkspace(activeWorkspaceId, { name: workspaceName }); setWorkspaces((prev) => prev.map((w) => w.id === activeWorkspaceId ? updated : w)) } catch (err) { setError(err.message) } }} /></div><div className="right-actions"><button onClick={onNewChat}>＋ Tạo đoạn chat mới</button><button onClick={onAnalytics}>Số liệu phân tích</button><button onClick={() => setSettingsOpen(true)}>Cài đặt</button><span className="avatar">U</span></div></header><main className="agent-grid"><section className="panel source-panel"><div className="panel-header"><h3>Nguồn</h3></div><input ref={fileRef} hidden type="file" accept="application/pdf,.pdf" onChange={(e) => onUpload(e.target.files?.[0])} /><button className="pill" onClick={() => fileRef.current?.click()}>＋ Thêm nguồn</button><div className="search-wrap"><input placeholder="Tìm nguồn..." value={query} onChange={(e) => setQuery(e.target.value)} /></div><label className="checkline"><input type="checkbox" checked={selectedCount > 0 && selectedCount === documents.length} onChange={(e) => toggleAll(e.target.checked)} />Chọn tất cả</label><small>{selectedCount} nguồn được chọn</small><div className="scroll-zone">{filteredDocs.map((d) => <article key={d.id} className="doc-card"><label><input type="checkbox" checked={selectedDocumentIds.includes(d.id)} onChange={() => toggleDoc(d.id)} />{d.filename || d.title}</label><button onClick={async () => { try { await api.deleteDocument(d.id); await loadWorkspaceData(activeWorkspaceId) } catch (err) { setError(err.message) } }}>Xóa</button></article>)}</div></section><section className="panel chat-panel"><div className="panel-header center-title"><h2>Cuộc Trò Chuyện</h2></div><div className="chat-zone scroll-zone">{messages.map((m, i) => <div key={i} className={`bubble ${m.role}`}><p>{m.content}</p>{m.role === 'assistant' && <button className="save-note" onClick={() => onSaveNote(m.content)}>Lưu vào ghi chú</button>}</div>)}</div><div className="composer"><textarea value={message} onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }} /><div><span>{selectedCount} nguồn</span><button className="send-btn" disabled={loading || !message.trim() || selectedCount === 0} onClick={send}>➤</button></div></div></section><section className="panel studio-panel"><div className="panel-header"><h3>Studio</h3></div><div className="template-grid">{templates.map((t) => <button key={t} className="template" onClick={() => onRunStudio(t)}>{t}<span>›</span></button>)}</div><h4 style={{ marginTop: '10px' }}>Ghi chú</h4><div className="scroll-zone">{notes.map((n) => <article key={n.id} className="note"><strong>{n.title}</strong><p>{n.content}</p><button onClick={async () => { try { await api.deleteNote(n.id); setNotes((prev) => prev.filter((x) => x.id !== n.id)) } catch (err) { setError(err.message) } }}>Xóa</button></article>)}</div></section></main>{error && <div className="chat-error" style={{ margin: 12 }}>{error}</div>}{settingsOpen && <div className="panel" style={{ position: 'fixed', top: '20%', left: '35%', right: '35%', zIndex: 100 }}><h3>Cài đặt</h3><input value={accent} onChange={(e) => setAccent(e.target.value)} /><button onClick={onSaveSettings}>Lưu</button><button onClick={() => setSettingsOpen(false)}>Đóng</button></div>}{analyticsOpen && <div className="panel" style={{ position: 'fixed', top: '18%', left: '30%', right: '30%', zIndex: 100 }}><h3>Analytics</h3><pre>{JSON.stringify(analytics, null, 2)}</pre><button onClick={() => setAnalyticsOpen(false)}>Đóng</button></div>}</div>
+  return <div className="workspace-shell"><header className="workspace-topbar"><div className="topbar-left"><div className="brand-mark">✦</div><div><p className="brand-title">Research AI</p><p className="brand-meta">{activeCount} tài liệu</p></div></div><div className="topbar-center"><div className="project-selector"><button type="button" className="project-caret" onClick={() => setProjectMenuOpen((v) => !v)} aria-label="Mở danh sách dự án">▾</button><input aria-label="Tên dự án" value={projectName} onChange={(e) => setProjectName(e.target.value)} onBlur={async () => { if (!activeProjectId) return; try { const updated = await api.updateWorkspace(activeProjectId, { name: projectName }); setProjects((prev) => prev.map((p) => (p.id === activeProjectId ? updated.workspace : p))) } catch (err) { showToast(err.message, 'error') } }} />{projectMenuOpen && <div className="project-menu">{projects.map((p) => <button key={p.id} type="button" onClick={async () => { setActiveProjectId(p.id); setProjectName(p.name); setProjectMenuOpen(false); await loadWorkspaceData(p.id) }}>{p.name}</button>)}<div className="project-divider" /><button type="button" onClick={async () => { try { const created = await api.createWorkspace({ name: `Research Workspace ${projects.length + 1}` }); setProjects((prev) => [...prev, created.workspace]); setActiveProjectId(created.workspace.id); setProjectName(created.workspace.name); setProjectMenuOpen(false); await loadWorkspaceData(created.workspace.id) } catch (err) { showToast(err.message, 'error') } }}>+ Tạo dự án mới</button></div>}</div></div><div className="topbar-right"><IconButton icon="＋" label="Tạo đoạn chat mới" onClick={async () => { try { const res = await api.createNewChat(activeProjectId); setMessages(res.messages || []); showToast('Đã tạo đoạn chat mới') } catch (err) { showToast(err.message, 'error') } }} /><IconButton icon="📈" label="Số liệu phân tích" onClick={async () => { try { setAnalytics(await api.getAnalytics(activeProjectId)); setAnalyticsOpen(true) } catch (err) { showToast(err.message, 'error') } }} /><IconButton icon="⚙" label="Cài đặt" onClick={() => setSettingsOpen(true)} /></div></header>
+  <div className="workspace-grid"><aside className="workspace-column source-column left-col"><div className="source-head"><div className="search-wrap"><span className="search-icon">⌕</span><input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Tìm tài liệu..." /></div></div><div className="source-list-scroll">{projectLoading ? <div className="doc-empty">Đang tải dữ liệu...</div> : !filteredDocs.length ? <div className="doc-empty">Chưa có tài liệu nào. Hãy tải PDF lên để bắt đầu.</div> : filteredDocs.map((doc) => <div key={doc.id} className={`doc-card ${selectedDocumentIds.includes(doc.id) ? 'is-highlight' : ''}`}><label><input type="checkbox" checked={selectedDocumentIds.includes(doc.id)} onChange={async () => { const next = selectedDocumentIds.includes(doc.id) ? selectedDocumentIds.filter((x) => x !== doc.id) : [...selectedDocumentIds, doc.id]; try { const r = await api.updateSourceSelection(activeProjectId, next); setSelectedDocumentIds(r.selected_document_ids || []) } catch (err) { showToast(err.message, 'error') } }} /><span>📄</span>{doc.title || doc.filename}</label><button type="button" className="doc-delete" onClick={async () => { try { await api.deleteDocument(doc.id); await loadWorkspaceData(activeProjectId); showToast('Đã xoá nguồn khỏi giao diện') } catch (err) { showToast(err.message, 'error') } }}>×</button></div>)}</div><div className="upload-zone-shell"><input ref={fileRef} hidden type="file" accept="application/pdf,.pdf" onChange={(e) => (e.target.files?.[0] ? (async () => { setLoading(true); try { await api.uploadDocument(activeProjectId, e.target.files[0]); await loadWorkspaceData(activeProjectId); showToast(`Đã thêm nguồn: ${e.target.files[0].name}`) } catch (err) { showToast(`Không thể tải tài liệu lên. ${err.message}`, 'error') } finally { setLoading(false) } })() : null)} /><div className="dropzone" onClick={() => fileRef.current?.click()}><span className="drop-icon">⤴</span>Tải tài liệu lên<br /><small>PDF · Tối đa 50MB</small></div></div></aside>
+  <main className="workspace-column chat-column mid-col"><div className="panel-header center-title"><h2>CUỘC TRÒ CHUYỆN</h2></div><div className="chat-messages chat-zone">{!messages.length ? <div className="doc-empty">Chưa có hội thoại nào. Hãy gửi câu hỏi đầu tiên.</div> : messages.map((m) => <div key={m.id} className={`bubble ${m.role}`}><p style={{ fontFamily: "'Lora', serif" }}>{m.content}</p><div className="message-actions"><span className="brand-meta">{m.created_at ? new Date(m.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : 'Bây giờ'}</span>{m.citations?.map((c, idx) => <button type="button" className="cite-pill" key={c.id || idx} onClick={() => { setActiveCitationId(c.document_id || c.paper_id || null) }}>[{idx + 1}]</button>)}{m.role === 'assistant' && <button type="button" className="save-note" onClick={async () => { try { await api.createNote(activeProjectId, { title: 'Ghi chú từ chat', content: m.content, citations: m.citations || [] }); const n = await api.getNotes(activeProjectId); setNotes(n.notes || []); showToast('Đã lưu vào ghi chú') } catch (err) { showToast(err.message, 'error') } }}>Lưu vào ghi chú</button>}</div></div>)}<div ref={messagesEndRef} /></div><div className="chat-input-shell"><div className="composer"><textarea value={inputValue} onChange={(e) => { setInputValue(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px` }} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }} placeholder="Đặt câu hỏi về tài liệu của bạn..." /><div><span>Enter gửi · Shift+Enter xuống dòng</span><button type="button" className={`send-btn ${inputValue.trim() && !loading ? 'active' : ''}`} onClick={sendMessage}>➤</button></div></div></div></main>
+  <aside className="workspace-column right-col"><div className="panel-header"><h3>Studio</h3><p className="brand-meta">Tạo ghi chú và tổng hợp từ nguồn đã chọn</p></div><div className="template-grid">{STUDIO_TEMPLATES.map((t) => <button key={t.label} type="button" className="template" onClick={async () => { if (!selectedDocumentIds.length) return showToast('Vui lòng chọn ít nhất một nguồn trước khi hỏi AI.', 'warning'); try { const r = await api.runStudioTemplate(activeProjectId, { template: t.key, selected_document_ids: selectedDocumentIds }); if (r.type === 'chat') setMessages((prev) => [...prev, { id: `studio-${Date.now()}`, role: 'assistant', content: r.content, citations: r.citations || [] }]); else { await api.createNote(activeProjectId, { title: r.title, content: r.content, citations: r.citations || [] }); const n = await api.getNotes(activeProjectId); setNotes(n.notes || []) } } catch (err) { showToast(err.message, 'error') } }}>{t.label}<span>›</span></button>)}</div><div className="notes-head"><h4>Ghi chú đã lưu</h4><button type="button" className="save-note" onClick={async () => { try { await api.createNote(activeProjectId, { title: 'Ghi chú mới', content: '' }); const n = await api.getNotes(activeProjectId); setNotes(n.notes || []); showToast('Đã thêm ghi chú mới') } catch (err) { showToast(err.message, 'error') } }}>+ Thêm ghi chú</button></div><div className="scroll-zone">{!notes.length ? <div className="note"><strong>Chưa có ghi chú nào.</strong><p>Đầu ra của Studio sẽ được lưu ở đây.</p></div> : notes.map((n) => <article key={n.id} className="note note-card"><button type="button" className="note-card-delete" aria-label="Xoá ghi chú" onClick={async (e) => { e.stopPropagation(); try { await api.deleteNote(n.id); setNotes((prev) => prev.filter((x) => x.id !== n.id)); showToast('Đã xoá ghi chú.') } catch (err) { showToast('Không thể xoá ghi chú.', 'error') } }}>×</button><strong>{n.title}</strong><p>{n.content || 'Ghi chú trống.'}</p><div className="note-actions"><button type="button" className="save-note" onClick={() => showToast('Chỉnh sửa ghi chú demo', 'info')}>Sửa</button></div></article>)}{activeCitationId && <div className="source-card is-highlight"><header><h4>Nguồn liên quan</h4></header><p className="source-doc">Đang chọn citation thuộc document ID: {String(activeCitationId)}</p></div>}</div></aside></div>
+  {analyticsOpen && <div className="modal-wrap"><div className="panel modal-panel"><h3>Analytics</h3><p className="analytics-line">Tài liệu: <strong>{analytics?.document_count ?? 0}</strong></p><p className="analytics-line">Nguồn đã chọn: <strong>{analytics?.selected_source_count ?? 0}</strong></p><p className="analytics-line">Tin nhắn: <strong>{analytics?.chat_message_count ?? 0}</strong></p><p className="analytics-line">Ghi chú: <strong>{analytics?.note_count ?? 0}</strong></p><p className="analytics-line">Trích dẫn: <strong>{analytics?.citation_count ?? 0}</strong></p><div className="modal-actions"><button type="button" onClick={() => setAnalyticsOpen(false)}>Đóng</button></div></div></div>}
+  {settingsOpen && <div className="modal-wrap"><div className="panel modal-panel"><h3>Cài đặt giao diện</h3><label className="modal-field">Accent color</label><input value={accentColor} onChange={(e) => setAccentColor(e.target.value)} /><div className="modal-actions"><button type="button" onClick={async () => { try { const s = await api.updateSettings({ theme_mode: 'dark', accent_color: accentColor }); document.documentElement.style.setProperty('--accent', s.accent_color); setSettingsOpen(false) } catch (err) { showToast(err.message, 'error') } }}>Lưu</button><button type="button" onClick={() => setSettingsOpen(false)}>Đóng</button></div></div></div>}
+  <Toast toast={toast} onClose={() => setToast(null)} /></div>
 }
