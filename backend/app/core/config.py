@@ -12,10 +12,6 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ''
     database_url: str = ''
 
-    jwt_secret_key: str = ''
-    jwt_algorithm: str = 'HS256'
-    access_token_expire_minutes: int = 10080
-
     upload_dir: str = './storage/uploads'
     cors_origins: str = 'http://localhost:5173'
 
