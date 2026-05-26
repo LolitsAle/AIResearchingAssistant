@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Toast from '../components/Toast'
 import { api } from '../services/api'
+import { useAuth } from '../contexts/AuthContext'
 
 const STUDIO_TEMPLATES = [
   { key: 'deep_summary', label: 'Tóm tắt chuyên sâu' },
@@ -19,6 +20,7 @@ function IconButton({ icon, label, onClick }) {
 }
 
 export default function ResearchPage() {
+  const { user } = useAuth()
   const [projects, setProjects] = useState([])
   const [activeProjectId, setActiveProjectId] = useState('')
   const [projectName, setProjectName] = useState('')

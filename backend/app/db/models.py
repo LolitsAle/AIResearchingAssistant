@@ -12,9 +12,22 @@ def uid() -> str:
     return str(uuid.uuid4())
 
 
+class User(Base):
+    __tablename__ = 'users'
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=True)
+    avatar_url: Mapped[str] = mapped_column(String, nullable=True)
+    auth_provider: Mapped[str] = mapped_column(String, default='password')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Workspace(Base):
     __tablename__ = 'workspaces'
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
     name: Mapped[str] = mapped_column(String, default='Workspace mới')
     active_theme_color: Mapped[str] = mapped_column(String, default='#6d5dfc')
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

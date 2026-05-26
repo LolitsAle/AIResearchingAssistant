@@ -94,7 +94,8 @@ def run_studio(workspace_id: str, payload: dict, db: Session = Depends(get_db)):
     return {'message': {'id': msg.id, 'role': 'assistant', 'content': msg.content, 'citations': cites, 'created_at': msg.created_at}}
 
 @router.get('/workspaces/{workspace_id}/notes')
-def get_notes(workspace_id: str, db: Session = Depends(get_db)):
+def get_notes(workspace_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _ensure_workspace_access(db, workspace_id, current_user.id)
     rows = db.query(Note).filter(Note.workspace_id == workspace_id).order_by(Note.created_at.desc()).all()
     return {'notes': [{'id': n.id, 'workspace_id': n.workspace_id, 'title': n.title, 'content': n.content, 'citations': json.loads(n.citations_json or '[]'), 'source_message_id': n.source_message_id, 'created_at': n.created_at, 'updated_at': n.updated_at} for n in rows]}
 
@@ -104,15 +105,15 @@ def create_note(workspace_id: str, payload: dict, db: Session = Depends(get_db))
     db.add(note); db.commit(); db.refresh(note); return {'note': {'id': note.id, 'workspace_id': note.workspace_id, 'title': note.title, 'content': note.content, 'citations': json.loads(note.citations_json or '[]'), 'source_message_id': note.source_message_id, 'created_at': note.created_at, 'updated_at': note.updated_at}}
 
 @router.patch('/notes/{note_id}')
-def patch_note(note_id: str, payload: dict, db: Session = Depends(get_db)):
-    note = db.query(Note).filter(Note.id == note_id).first()
+def patch_note(note_id: str, payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    note = db.query(Note).join(Workspace, Workspace.id == Note.workspace_id).filter(Note.id == note_id, Workspace.user_id == current_user.id).first()
     if not note: raise AppError('Không tìm thấy ghi chú', 404)
     note.title = payload.get('title', note.title); note.content = payload.get('content', note.content)
     db.commit(); db.refresh(note); return {'note': {'id': note.id, 'title': note.title, 'content': note.content}}
 
 @router.delete('/notes/{note_id}')
-def remove_note(note_id: str, db: Session = Depends(get_db)):
-    note = db.query(Note).filter(Note.id == note_id).first()
+def remove_note(note_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    note = db.query(Note).join(Workspace, Workspace.id == Note.workspace_id).filter(Note.id == note_id, Workspace.user_id == current_user.id).first()
     if not note: raise AppError('Không tìm thấy ghi chú', 404)
     db.delete(note); db.commit(); return {'deleted': True}
 
