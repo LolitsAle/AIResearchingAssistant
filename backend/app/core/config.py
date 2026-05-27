@@ -4,12 +4,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
-    ollama_base_url: str = 'http://localhost:11434'
-    ollama_chat_model: str = 'llama3.1'
-    ollama_embed_model: str = 'nomic-embed-text'
-    database_url: str = 'sqlite:///./research_assistant.db'
-    upload_dir: str = './app/storage/uploads'
-    cors_origins: str = 'http://localhost:5173,http://127.0.0.1:5173'
+    google_api_key: str = ''
+    gemini_model: str = 'gemini-1.5-flash'
+    google_embedding_model: str = 'text-embedding-004'
+
+    supabase_url: str = ''
+    supabase_service_role_key: str = ''
+    database_url: str = ''
+
+    jwt_secret_key: str = ''
+    jwt_algorithm: str = 'HS256'
+    access_token_expire_minutes: int = 10080
+    google_client_id: str = ''
+
+    upload_dir: str = './storage/uploads'
+    cors_origins: str = 'http://localhost:5173'
 
     @property
     def cors_origins_list(self) -> list[str]:

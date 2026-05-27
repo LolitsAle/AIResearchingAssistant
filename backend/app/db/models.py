@@ -1,6 +1,7 @@
 from datetime import datetime
 import uuid
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Integer, Text, String
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,19 +12,32 @@ def uid() -> str:
     return str(uuid.uuid4())
 
 
+class User(Base):
+    __tablename__ = 'users'
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    name: Mapped[str] = mapped_column(String)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=True)
+    avatar_url: Mapped[str] = mapped_column(String, nullable=True)
+    auth_provider: Mapped[str] = mapped_column(String, default='password')
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Workspace(Base):
     __tablename__ = 'workspaces'
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
     name: Mapped[str] = mapped_column(String, default='Workspace mới')
     active_theme_color: Mapped[str] = mapped_column(String, default='#6d5dfc')
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-class Paper(Base):
-    __tablename__ = 'papers'
+class Document(Base):
+    __tablename__ = 'documents'
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
-    workspace_id: Mapped[str] = mapped_column(ForeignKey('workspaces.id', ondelete='CASCADE'), nullable=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey('workspaces.id', ondelete='CASCADE'))
     title: Mapped[str] = mapped_column(String)
     filename: Mapped[str] = mapped_column(String)
     file_path: Mapped[str] = mapped_column(String)
@@ -32,43 +46,25 @@ class Paper(Base):
     status: Mapped[str] = mapped_column(String, default='indexed')
     is_selected: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-class PaperChunk(Base):
-    __tablename__ = 'paper_chunks'
+class DocumentChunk(Base):
+    __tablename__ = 'document_chunks'
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
-    paper_id: Mapped[str] = mapped_column(ForeignKey('papers.id', ondelete='CASCADE'))
-    section: Mapped[str] = mapped_column(String, default='Unknown')
+    document_id: Mapped[str] = mapped_column(ForeignKey('documents.id', ondelete='CASCADE'))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey('workspaces.id', ondelete='CASCADE'))
+    content: Mapped[str] = mapped_column(Text)
     page_start: Mapped[int] = mapped_column(Integer, default=1)
     page_end: Mapped[int] = mapped_column(Integer, default=1)
-    content: Mapped[str] = mapped_column(Text)
-    chunk_index: Mapped[int] = mapped_column(Integer)
-    embedding_json: Mapped[str] = mapped_column(Text, default='')
+    section: Mapped[str] = mapped_column(String, default='Unknown')
+    embedding: Mapped[list[float]] = mapped_column(Vector(768))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-
-class PaperSummary(Base):
-    __tablename__ = 'paper_summaries'
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
-    paper_id: Mapped[str] = mapped_column(ForeignKey('papers.id', ondelete='CASCADE'), unique=True)
-    short_summary: Mapped[str] = mapped_column(Text, default='')
-    detailed_summary: Mapped[str] = mapped_column(Text, default='')
-    research_problem: Mapped[str] = mapped_column(Text, default='')
-    methodology: Mapped[str] = mapped_column(Text, default='')
-    main_contributions_json: Mapped[str] = mapped_column(Text, default='[]')
-    key_ideas_json: Mapped[str] = mapped_column(Text, default='[]')
-    results_json: Mapped[str] = mapped_column(Text, default='[]')
-    limitations_json: Mapped[str] = mapped_column(Text, default='[]')
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ChatMessage(Base):
     __tablename__ = 'chat_messages'
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
-    workspace_id: Mapped[str] = mapped_column(ForeignKey('workspaces.id', ondelete='CASCADE'), nullable=True)
-    paper_id: Mapped[str] = mapped_column(ForeignKey('papers.id', ondelete='CASCADE'), nullable=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey('workspaces.id', ondelete='CASCADE'))
     role: Mapped[str] = mapped_column(String)
     content: Mapped[str] = mapped_column(Text)
     citations_json: Mapped[str] = mapped_column(Text, default='[]')
@@ -82,14 +78,6 @@ class Note(Base):
     title: Mapped[str] = mapped_column(String, default='Ghi chú mới')
     content: Mapped[str] = mapped_column(Text, default='')
     citations_json: Mapped[str] = mapped_column(Text, default='[]')
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class Setting(Base):
-    __tablename__ = 'settings'
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
-    theme_mode: Mapped[str] = mapped_column(String, default='dark')
-    accent_color: Mapped[str] = mapped_column(String, default='#6d5dfc')
+    source_message_id: Mapped[str] = mapped_column(String, default='')
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -1,58 +1,40 @@
-# AI Researching Assistant (React + FastAPI + Ollama)
+# AI Researching Assistant
 
-## Overview
-Local-first AI Research Assistant for uploading academic PDFs, generating structured summaries, Q&A with citations, term explanation, and multi-paper comparison.
-
-## Features
-- Upload PDF papers
-- Parse and chunk documents
-- Generate structured summary
-- RAG Q&A with citations
-- Explain academic terms
-- Compare multiple papers
-
-## Tech Stack
-- Frontend: React + Vite
-- Backend: FastAPI + SQLAlchemy + SQLite
-- LLM: Ollama local (`llama3.1`)
-- Retrieval: TF-IDF cosine similarity
-
-## Prerequisites
-- Python 3.11+
-- Node.js 18+
-- Ollama installed
-
-## Ollama setup
-```bash
-ollama pull llama3.1
-ollama pull nomic-embed-text
-ollama serve
-```
+## Required Stack
+- Backend: FastAPI + Python (Render)
+- Frontend: React + Vite (Vercel)
+- PDF Parse: pdfplumber
+- Embedding: Google text-embedding-004
+- Vector DB: Supabase PostgreSQL + pgvector
+- LLM: Gemini 1.5 Flash
 
 ## Backend setup
-```bash
-cd backend
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
-uvicorn app.main:app --reload --port 8000
-```
+1. Copy `backend/.env.example` to `backend/.env` and fill envs.
+2. Install dependencies: `pip install -r backend/requirements.txt`
+3. Start API: `uvicorn app.main:app --host 0.0.0.0 --port 8000` (run in `backend/`).
+
+### Render deploy
+Start command:
+`uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+Required envs:
+- GOOGLE_API_KEY
+- GEMINI_MODEL
+- GOOGLE_EMBEDDING_MODEL
+- SUPABASE_URL
+- SUPABASE_SERVICE_ROLE_KEY
+- DATABASE_URL
+- CORS_ORIGINS
 
 ## Frontend setup
-```bash
-cd frontend
-npm install
-copy .env.example .env
-npm run dev
-```
+1. Copy `frontend/.env.example` to `frontend/.env`.
+2. `npm install`
+3. `npm run dev`
 
-## API docs
-- Swagger: http://localhost:8000/docs
+### Vercel deploy
+- Build command: `npm run build`
+- Output directory: `dist`
+- Env: `VITE_API_BASE_URL=https://<render-backend-url>/api`
 
-## Troubleshooting
-- **Ollama not running**: start `ollama serve`.
-- **Model not found**: run `ollama pull llama3.1`.
-- **Scanned PDF**: OCR is not supported yet.
-- **CORS error**: check `CORS_ORIGINS` in backend `.env`.
+## Notes on old stack
+- Ollama/Chroma/FAISS/PyMuPDF flows are deprecated and removed from the main runtime flow.

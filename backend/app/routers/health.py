@@ -1,9 +1,18 @@
 from fastapi import APIRouter
-from app.services.ollama_service import ollama_service
+from sqlalchemy import text
+
+from app.db.database import engine
 
 router = APIRouter()
 
 
 @router.get('/health')
 def health():
-    return {'status': 'ok', 'ollama': ollama_service.health()}
+    db_status = 'unavailable'
+    try:
+        with engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+        db_status = 'available'
+    except Exception:
+        db_status = 'unavailable'
+    return {'status': 'ok', 'llm': 'gemini', 'database': db_status}
