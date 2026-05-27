@@ -4,6 +4,8 @@ import jwt
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.context import CryptContext
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -45,3 +47,12 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if not user:
         raise AppError('Unauthorized', 401)
     return user
+
+
+def verify_google_credential(credential: str) -> dict:
+    if not settings.google_client_id:
+        raise AppError('Thiếu cấu hình GOOGLE_CLIENT_ID.', 500)
+    try:
+        return id_token.verify_oauth2_token(credential, google_requests.Request(), settings.google_client_id)
+    except Exception as exc:
+        raise AppError('Không thể đăng nhập bằng Google.', 401) from exc

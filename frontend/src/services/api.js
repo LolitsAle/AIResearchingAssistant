@@ -34,6 +34,7 @@ const json = (method, body) => ({ method, headers: { 'Content-Type': 'applicatio
 export const api = {
   register: (payload) => request('/auth/register', json('POST', payload)),
   login: (payload) => request('/auth/login', json('POST', payload)),
+  loginWithGoogle: (credential) => request('/auth/google', json('POST', { credential })),
   getMe: () => request('/auth/me'),
   logout: () => request('/auth/logout', { method: 'POST' }),
 

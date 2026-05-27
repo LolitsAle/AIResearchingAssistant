@@ -40,6 +40,7 @@ export function AuthProvider({ children }) {
     user, token, loading,
     login: async (email, password) => { const res = await api.login({ email, password }); saveSession(res.access_token, res.user); return res },
     register: async (name, email, password) => { const res = await api.register({ name, email, password }); saveSession(res.access_token, res.user); return res },
+    loginWithGoogle: async (credential) => { const res = await api.loginWithGoogle(credential); saveSession(res.access_token, res.user); return res },
     logout: async () => { try { await api.logout() } finally { clearSession() } },
     refreshMe,
   }), [user, token, loading])

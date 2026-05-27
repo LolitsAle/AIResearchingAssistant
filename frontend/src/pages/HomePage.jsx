@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function HomePage() {
-  const { user, login, register, logout } = useAuth()
+  const { user, login, register, logout, loginWithGoogle } = useAuth()
   const [mode, setMode] = useState('login')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -12,6 +12,18 @@ export default function HomePage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+
+  const doGoogle = async () => {
+    try {
+      if (!import.meta.env.VITE_GOOGLE_CLIENT_ID) throw new Error('Thiếu cấu hình Google Client ID.')
+      const credential = window.prompt('Dán Google ID token vào đây để đăng nhập:')
+      if (!credential) return
+      await loginWithGoogle(credential)
+      navigate('/research')
+    } catch (err) {
+      setError(err.message || 'Không thể đăng nhập bằng Google.')
+    }
+  }
 
   const submit = async () => {
     setError('')
@@ -42,6 +54,7 @@ export default function HomePage() {
       {mode === 'register' && <input type='password' placeholder='Xác nhận mật khẩu' value={confirm} onChange={(e)=>setConfirm(e.target.value)} />}
       {error && <small style={{color:'#ef4444'}}>{error}</small>}
       <button className='cta' onClick={submit} disabled={loading}>{mode === 'register' ? 'Đăng ký' : 'Đăng nhập'}</button>
+      <button className='cta' onClick={doGoogle}>Đăng nhập bằng Google</button>
       <button onClick={() => setMode(mode === 'register' ? 'login' : 'register')}>{mode === 'register' ? 'Đã có tài khoản? Đăng nhập' : 'Chưa có tài khoản? Đăng ký'}</button>
     </div>
   </div>

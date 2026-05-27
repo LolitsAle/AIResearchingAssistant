@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db.database import get_db
 from app.db.models import User
-from app.services.auth_service import create_access_token, get_current_user, hash_password, verify_password
+from app.services.auth_service import create_access_token, get_current_user, hash_password, verify_google_credential, verify_password
 
 router = APIRouter()
 
@@ -20,6 +20,9 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
 
 
 def _serialize_user(user: User) -> dict:
@@ -46,6 +49,19 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     return {'user': _serialize_user(user), 'access_token': create_access_token(user.id)}
 
 
+
+
+@router.post('/auth/google')
+def login_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
+    info = verify_google_credential(payload.credential)
+    email = (info.get('email') or '').lower()
+    if not email:
+        raise AppError('Không thể đăng nhập bằng Google.', 401)
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        user = User(name=info.get('name') or email.split('@')[0], email=email, avatar_url=info.get('picture'), auth_provider='google', hashed_password=None)
+        db.add(user); db.commit(); db.refresh(user)
+    return {'user': _serialize_user(user), 'access_token': create_access_token(user.id)}
 
 
 @router.get('/auth/me')
