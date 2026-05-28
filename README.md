@@ -38,3 +38,16 @@ Required envs:
 
 ## Notes on old stack
 - Ollama/Chroma/FAISS/PyMuPDF flows are deprecated and removed from the main runtime flow.
+
+## Backend troubleshooting
+
+### psycopg2 `invalid connection option "pgbouncer"`
+If backend startup fails with `psycopg2.ProgrammingError: invalid dsn: invalid connection option "pgbouncer"`:
+
+1. Open `backend/.env`.
+2. Remove `pgbouncer=true` from `DATABASE_URL`.
+3. Keep valid parameters like `sslmode=require` if needed.
+
+Example fix:
+- From: `postgresql://.../postgres?pgbouncer=true&sslmode=require`
+- To: `postgresql://.../postgres?sslmode=require`
