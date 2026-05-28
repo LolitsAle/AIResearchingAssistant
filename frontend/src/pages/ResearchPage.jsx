@@ -1,126 +1,551 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import Toast from '../components/Toast'
-import { api } from '../services/api'
-import { useAuth } from '../contexts/AuthContext'
+import { useMemo, useState, useEffect, useRef } from "react";
+import { useParams, Link } from "react-router-dom";
+import { api } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
-const STUDIO_TEMPLATES = [
-  { key: 'deep_summary', label: 'Tóm tắt chuyên sâu' },
-  { key: 'key_arguments', label: 'Rút trích luận điểm' },
-  { key: 'citation_answer', label: 'Hỏi đáp theo từng đoạn' },
-  { key: 'terminology', label: 'Giải thích thuật ngữ' },
-  { key: 'compare_sources', label: 'So sánh nhiều nguồn' },
-  { key: 'citation_answer', label: 'Trả lời có trích dẫn' },
-  { key: 'flashcards', label: 'Flashcards' },
-  { key: 'quiz', label: 'Bài kiểm tra' },
-  { key: 'data_table', label: 'Bảng dữ liệu' },
-]
+// ─── SourceCard ───────────────────────────────────────────────────────────────
+function SourceCard({ source, index }) {
+  const title = source.title || source.source_name || `Đoạn ${source.chunk_id || index + 1}`;
+  const url = source.url || source.link;
+  const snippet = source.snippet || source.summary || source.content;
+  const page = source.page;
+  const score = source.score || source.relevance;
+  const scoreText = typeof score === "number" ? `${Math.round(score <= 1 ? score * 100 : score)}%` : null;
 
-function IconButton({ icon, label, onClick }) {
-  return <button type="button" className="icon-btn" aria-label={label} data-tooltip={label} onClick={onClick}>{icon}</button>
+  return (
+    <div style={{
+      background: "rgba(255,255,255,0.03)",
+      border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 12,
+      padding: "14px 16px",
+      marginBottom: 10,
+      transition: "border-color 0.2s, background 0.2s",
+      cursor: "default",
+    }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(196,164,100,0.4)"; e.currentTarget.style.background = "rgba(196,164,100,0.04)"; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+        {url
+          ? <a href={url} target="_blank" rel="noreferrer" style={{ fontFamily: "'Lora', Georgia, serif", fontWeight: 600, fontSize: 13, color: "#c4a464", textDecoration: "none" }}>{title}</a>
+          : <span style={{ fontFamily: "'Lora', Georgia, serif", fontWeight: 600, fontSize: 13, color: "#c4a464" }}>{title}</span>
+        }
+        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          {typeof page === "number" && (
+            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99, background: "rgba(255,255,255,0.06)", color: "#9a9080", border: "1px solid rgba(255,255,255,0.08)", whiteSpace: "nowrap" }}>
+              tr. {page}
+            </span>
+          )}
+          {scoreText && (
+            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99, background: "rgba(196,164,100,0.12)", color: "#c4a464", border: "1px solid rgba(196,164,100,0.2)", whiteSpace: "nowrap" }}>
+              {scoreText}
+            </span>
+          )}
+        </div>
+      </div>
+      {snippet && (
+        <p style={{ fontSize: 12, lineHeight: 1.65, color: "#8a8070", margin: 0, whiteSpace: "pre-wrap", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          {snippet}
+        </p>
+      )}
+    </div>
+  );
 }
 
+// ─── Message Bubble ───────────────────────────────────────────────────────────
+function MessageBubble({ msg, index }) {
+  const isUser = msg.role === "user";
+  return (
+    <div style={{
+      display: "flex",
+      justifyContent: isUser ? "flex-end" : "flex-start",
+      marginBottom: 16,
+      animation: `fadeSlideIn 0.3s ease ${index * 0.05}s both`,
+    }}>
+      {!isUser && (
+        <div style={{
+          width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+          background: "linear-gradient(135deg, #c4a464, #8a6a30)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 14, marginRight: 10, marginTop: 2, boxShadow: "0 2px 8px rgba(196,164,100,0.3)",
+        }}>✦</div>
+      )}
+      <div style={{
+        maxWidth: "75%",
+        padding: "12px 16px",
+        borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+        background: isUser
+          ? "linear-gradient(135deg, #c4a464, #a08040)"
+          : "rgba(255,255,255,0.05)",
+        border: isUser ? "none" : "1px solid rgba(255,255,255,0.08)",
+        color: isUser ? "#1a1510" : "#d4cfc8",
+        fontSize: 14,
+        lineHeight: 1.7,
+        whiteSpace: "pre-wrap",
+        fontFamily: isUser ? "'DM Sans', sans-serif" : "'Lora', Georgia, serif",
+        fontWeight: isUser ? 500 : 400,
+        boxShadow: isUser ? "0 4px 16px rgba(196,164,100,0.2)" : "none",
+      }}>
+        {msg.content}
+      </div>
+    </div>
+  );
+}
+
+// ─── ResearchPage ─────────────────────────────────────────────────────────────
 export default function ResearchPage() {
-  const { user } = useAuth()
-  const [projects, setProjects] = useState([])
-  const [activeProjectId, setActiveProjectId] = useState('')
-  const [projectName, setProjectName] = useState('')
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
-  const [documents, setDocuments] = useState([])
-  const [selectedDocumentIds, setSelectedDocumentIds] = useState([])
-  const [messages, setMessages] = useState([])
-  const [notes, setNotes] = useState([])
-  const [inputValue, setInputValue] = useState('')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [activeCitationId, setActiveCitationId] = useState(null)
-  const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [analytics, setAnalytics] = useState(null)
-  const [toast, setToast] = useState(null)
-  const [accentColor, setAccentColor] = useState('#6366f1')
-  const [loading, setLoading] = useState(false)
-  const [projectLoading, setProjectLoading] = useState(false)
+  const { docId } = useParams();
+  const { token } = useAuth();
 
-  const toastTimerRef = useRef(null)
-  const messagesEndRef = useRef(null)
-  const fileRef = useRef(null)
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [sources, setSources] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [showSources, setShowSources] = useState(true);
+  const bottomRef = useRef(null);
+  const textareaRef = useRef(null);
 
-  const filteredDocs = useMemo(() => documents.filter((d) => (d.title || d.filename || '').toLowerCase().includes(searchQuery.toLowerCase())), [documents, searchQuery])
-  const activeCount = selectedDocumentIds.length
-
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type })
-    window.clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2300)
-  }
-
-  const loadWorkspaceData = async (workspaceId) => {
-    const [src, chat, noteData] = await Promise.all([
-      api.getWorkspaceSources(workspaceId),
-      api.getWorkspaceChat(workspaceId),
-      api.getNotes(workspaceId),
-    ])
-    setDocuments(src.sources || [])
-    setSelectedDocumentIds(src.selected_document_ids || [])
-    setMessages(chat.messages || [])
-    setNotes(noteData.notes || [])
-  }
+  const chatHistory = useMemo(
+    () => messages.map(({ role, content }) => ({ role, content })),
+    [messages]
+  );
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        setProjectLoading(true)
-        const settings = await api.getSettings()
-        if (settings?.accent_color) {
-          setAccentColor(settings.accent_color)
-          document.documentElement.style.setProperty('--accent', settings.accent_color)
-        }
-        const wsData = await api.getWorkspaces()
-        let list = wsData.workspaces || []
-        if (!list.length) {
-          const created = await api.createWorkspace({ name: 'Research Workspace' })
-          list = [created.workspace]
-        }
-        setProjects(list)
-        const current = list[0]
-        setActiveProjectId(current.id)
-        setProjectName(current.name)
-        await loadWorkspaceData(current.id)
-      } catch (err) {
-        showToast(err.message, 'error')
-      } finally {
-        setProjectLoading(false)
-      }
-    }
-    init()
-    return () => window.clearTimeout(toastTimerRef.current)
-  }, [])
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  const handleSubmit = async () => {
+    const question = input.trim();
+    if (!question || loading) return;
 
-  const sendMessage = async () => {
-    const text = inputValue.trim()
-    if (!text) return showToast('Vui lòng nhập câu hỏi', 'warning')
-    if (!selectedDocumentIds.length) return showToast('Vui lòng chọn ít nhất một nguồn trước khi hỏi AI.', 'warning')
-    setLoading(true)
-    setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, role: 'user', content: text, created_at: new Date().toISOString(), citations: [] }])
-    setInputValue('')
+    setError("");
+    setInput("");
+    setMessages(prev => [...prev, { role: "user", content: question }]);
+    setLoading(true);
+
     try {
-      const res = await api.sendWorkspaceMessage(activeProjectId, { message: text, selected_document_ids: selectedDocumentIds })
-      setMessages((prev) => [...prev, res.message || { id: `a-${Date.now()}`, role: 'assistant', content: res.answer, citations: res.citations || [] }])
+      const response = await api.sendResearchQuery({ docId, question, chatHistory }, token);
+      const answer = response?.answer || response?.message || response?.content || "Không có nội dung trả lời.";
+      setMessages(prev => [...prev, { role: "assistant", content: answer }]);
+      const nextSources = response?.sources || response?.citations || response?.documents || [];
+      setSources(Array.isArray(nextSources) ? nextSources : []);
+      if (nextSources.length > 0) setShowSources(true);
     } catch (err) {
-      showToast(err.message, 'error')
+      setError(err.message || "Không thể nhận phản hồi từ hệ thống.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  return <div className="workspace-shell"><header className="workspace-topbar"><div className="topbar-left"><div className="brand-mark">✦</div><div><p className="brand-title">Research AI</p><p className="brand-meta">{activeCount} tài liệu</p></div></div><div className="topbar-center"><div className="project-selector"><button type="button" className="project-caret" onClick={() => setProjectMenuOpen((v) => !v)} aria-label="Mở danh sách dự án">▾</button><input aria-label="Tên dự án" value={projectName} onChange={(e) => setProjectName(e.target.value)} onBlur={async () => { if (!activeProjectId) return; try { const updated = await api.updateWorkspace(activeProjectId, { name: projectName }); setProjects((prev) => prev.map((p) => (p.id === activeProjectId ? updated.workspace : p))) } catch (err) { showToast(err.message, 'error') } }} />{projectMenuOpen && <div className="project-menu">{projects.map((p) => <button key={p.id} type="button" onClick={async () => { setActiveProjectId(p.id); setProjectName(p.name); setProjectMenuOpen(false); await loadWorkspaceData(p.id) }}>{p.name}</button>)}<div className="project-divider" /><button type="button" onClick={async () => { try { const created = await api.createWorkspace({ name: `Research Workspace ${projects.length + 1}` }); setProjects((prev) => [...prev, created.workspace]); setActiveProjectId(created.workspace.id); setProjectName(created.workspace.name); setProjectMenuOpen(false); await loadWorkspaceData(created.workspace.id) } catch (err) { showToast(err.message, 'error') } }}>+ Tạo dự án mới</button></div>}</div></div><div className="topbar-right"><IconButton icon="＋" label="Tạo đoạn chat mới" onClick={async () => { try { const res = await api.createNewChat(activeProjectId); setMessages(res.messages || []); showToast('Đã tạo đoạn chat mới') } catch (err) { showToast(err.message, 'error') } }} /><IconButton icon="📈" label="Số liệu phân tích" onClick={async () => { try { setAnalytics(await api.getAnalytics(activeProjectId)); setAnalyticsOpen(true) } catch (err) { showToast(err.message, 'error') } }} /><IconButton icon="⚙" label="Cài đặt" onClick={() => setSettingsOpen(true)} /></div></header>
-  <div className="workspace-grid"><aside className="workspace-column source-column left-col"><div className="source-head"><div className="search-wrap"><span className="search-icon">⌕</span><input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Tìm tài liệu..." /></div></div><div className="source-list-scroll">{projectLoading ? <div className="doc-empty">Đang tải dữ liệu...</div> : !filteredDocs.length ? <div className="doc-empty">Chưa có tài liệu nào. Hãy tải PDF lên để bắt đầu.</div> : filteredDocs.map((doc) => <div key={doc.id} className={`doc-card ${selectedDocumentIds.includes(doc.id) ? 'is-highlight' : ''}`}><label><input type="checkbox" checked={selectedDocumentIds.includes(doc.id)} onChange={async () => { const next = selectedDocumentIds.includes(doc.id) ? selectedDocumentIds.filter((x) => x !== doc.id) : [...selectedDocumentIds, doc.id]; try { const r = await api.updateSourceSelection(activeProjectId, next); setSelectedDocumentIds(r.selected_document_ids || []) } catch (err) { showToast(err.message, 'error') } }} /><span>📄</span>{doc.title || doc.filename}</label><button type="button" className="doc-delete" onClick={async () => { try { await api.deleteDocument(doc.id); await loadWorkspaceData(activeProjectId); showToast('Đã xoá nguồn khỏi giao diện') } catch (err) { showToast(err.message, 'error') } }}>×</button></div>)}</div><div className="upload-zone-shell"><input ref={fileRef} hidden type="file" accept="application/pdf,.pdf" onChange={(e) => (e.target.files?.[0] ? (async () => { setLoading(true); try { await api.uploadDocument(activeProjectId, e.target.files[0]); await loadWorkspaceData(activeProjectId); showToast(`Đã thêm nguồn: ${e.target.files[0].name}`) } catch (err) { showToast(`Không thể tải tài liệu lên. ${err.message}`, 'error') } finally { setLoading(false) } })() : null)} /><div className="dropzone" onClick={() => fileRef.current?.click()}><span className="drop-icon">⤴</span>Tải tài liệu lên<br /><small>PDF · Tối đa 50MB</small></div></div></aside>
-  <main className="workspace-column chat-column mid-col"><div className="panel-header center-title" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h2>CUỘC TRÒ CHUYỆN</h2><div style={{display:'flex',alignItems:'center',gap:8}}><div style={{width:28,height:28,borderRadius:'50%',background:'#4f46e5',display:'grid',placeItems:'center',fontSize:12,color:'#fff'}}>{(user?.name || 'Khách').charAt(0).toUpperCase()}</div><span className="brand-meta">{user?.name || 'Khách'}</span></div></div><div className="chat-messages chat-zone">{!messages.length ? <div className="doc-empty">{`Xin chào ${user?.name || ''}${user?.name ? ',' : ''} hôm nay bạn muốn nghiên cứu tài liệu nào?`}</div> : messages.map((m) => <div key={m.id} className={`bubble ${m.role}`}><p style={{ fontFamily: "'Lora', serif" }}>{m.content}</p><div className="message-actions"><span className="brand-meta">{m.created_at ? new Date(m.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : 'Bây giờ'}</span>{m.citations?.map((c, idx) => <button type="button" className="cite-pill" key={c.id || idx} onClick={() => { setActiveCitationId(c.document_id || c.paper_id || null) }}>[{idx + 1}]</button>)}{m.role === 'assistant' && <button type="button" className="save-note" onClick={async () => { try { await api.createNote(activeProjectId, { title: m.content.slice(0, 48) || 'Ghi chú từ chat', content: m.content, citations: m.citations || [], source_message_id: m.id }); const n = await api.getNotes(activeProjectId); setNotes(n.notes || []); showToast('Đã lưu vào ghi chú') } catch (err) { showToast(err.message, 'error') } }}>Lưu vào ghi chú</button>}</div></div>)}<div ref={messagesEndRef} /></div><div className="chat-input-shell"><div className="composer"><textarea value={inputValue} onChange={(e) => { setInputValue(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px` }} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }} placeholder="Đặt câu hỏi về tài liệu của bạn..." /><div><span>Enter gửi · Shift+Enter xuống dòng</span><button type="button" className={`send-btn ${inputValue.trim() && !loading ? 'active' : ''}`} onClick={sendMessage}>➤</button></div></div></div></main>
-  <aside className="workspace-column right-col"><div className="panel-header"><h3>Studio</h3><p className="brand-meta">Chạy prompt template và trả kết quả trực tiếp vào chat</p></div><div className="template-grid">{STUDIO_TEMPLATES.map((t) => <button key={t.label} type="button" className="template" onClick={async () => { if (!selectedDocumentIds.length) return showToast('Vui lòng chọn ít nhất một nguồn trước khi hỏi AI.', 'warning'); try { const r = await api.runStudioTemplate(activeProjectId, { template: t.key, selected_document_ids: selectedDocumentIds }); const studioMessage = r.message || { id: `studio-${Date.now()}`, role: 'assistant', content: r.content, citations: r.citations || [] }; setMessages((prev) => [...prev, studioMessage]); } catch (err) { showToast(err.message, 'error') } }}>{t.label}<span>›</span></button>)}</div><div className="notes-head"><h4>Ghi chú đã lưu</h4><button type="button" className="save-note" onClick={async () => { try { await api.createNote(activeProjectId, { title: 'Ghi chú mới', content: '' }); const n = await api.getNotes(activeProjectId); setNotes(n.notes || []); showToast('Đã thêm ghi chú mới') } catch (err) { showToast(err.message, 'error') } }}>+ Thêm ghi chú</button></div><div className="scroll-zone">{!notes.length ? <div className="note"><strong>Chưa có ghi chú nào.</strong><p>Hãy lưu một câu trả lời từ Chat.</p></div> : notes.map((n) => <article key={n.id} className="note note-card"><button type="button" className="note-card-delete" aria-label="Xoá ghi chú" onClick={async (e) => { e.stopPropagation(); try { await api.deleteNote(n.id); setNotes((prev) => prev.filter((x) => x.id !== n.id)); showToast('Đã xoá ghi chú.') } catch (err) { showToast('Không thể xoá ghi chú.', 'error') } }}>×</button><strong>{n.title}</strong><p>{n.content || 'Ghi chú trống.'}</p><div className="note-actions"><button type="button" className="save-note" onClick={() => showToast('Chỉnh sửa ghi chú demo', 'info')}>Sửa</button></div></article>)}{activeCitationId && <div className="source-card is-highlight"><header><h4>Nguồn liên quan</h4></header><p className="source-doc">Đang chọn citation thuộc document ID: {String(activeCitationId)}</p></div>}</div></aside></div>
-  {analyticsOpen && <div className="modal-wrap"><div className="panel modal-panel"><h3>Analytics</h3><p className="analytics-line">Tài liệu: <strong>{analytics?.document_count ?? 0}</strong></p><p className="analytics-line">Nguồn đã chọn: <strong>{analytics?.selected_source_count ?? 0}</strong></p><p className="analytics-line">Tin nhắn: <strong>{analytics?.chat_message_count ?? 0}</strong></p><p className="analytics-line">Ghi chú: <strong>{analytics?.note_count ?? 0}</strong></p><p className="analytics-line">Trích dẫn: <strong>{analytics?.citation_count ?? 0}</strong></p><div className="modal-actions"><button type="button" onClick={() => setAnalyticsOpen(false)}>Đóng</button></div></div></div>}
-  {settingsOpen && <div className="modal-wrap"><div className="panel modal-panel"><h3>Cài đặt giao diện</h3><label className="modal-field">Accent color</label><input value={accentColor} onChange={(e) => setAccentColor(e.target.value)} /><div className="modal-actions"><button type="button" onClick={async () => { try { const s = await api.updateSettings({ theme_mode: 'dark', accent_color: accentColor }); document.documentElement.style.setProperty('--accent', s.accent_color); setSettingsOpen(false) } catch (err) { showToast(err.message, 'error') } }}>Lưu</button><button type="button" onClick={() => setSettingsOpen(false)}>Đóng</button></div></div></div>}
-  <Toast toast={toast} onClose={() => setToast(null)} /></div>
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+  };
+
+  const shortId = docId?.slice(0, 8);
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap');
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body { background: #0f0d0a; }
+
+        .research-page {
+          min-height: 100vh;
+          background: #0f0d0a;
+          background-image:
+            radial-gradient(ellipse 80% 50% at 20% 0%, rgba(196,164,100,0.06) 0%, transparent 60%),
+            radial-gradient(ellipse 60% 40% at 80% 100%, rgba(100,80,40,0.08) 0%, transparent 60%);
+          font-family: 'DM Sans', sans-serif;
+          color: #d4cfc8;
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+          overflow: hidden;
+        }
+
+        /* Header */
+        .rp-header {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 14px 24px;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          background: rgba(15,13,10,0.8);
+          backdrop-filter: blur(12px);
+          flex-shrink: 0;
+          z-index: 10;
+        }
+
+        .rp-back {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: #8a8070;
+          text-decoration: none;
+          font-size: 13px;
+          font-weight: 500;
+          padding: 6px 10px;
+          border-radius: 8px;
+          transition: color 0.2s, background 0.2s;
+          white-space: nowrap;
+        }
+        .rp-back:hover { color: #c4a464; background: rgba(196,164,100,0.08); }
+
+        .rp-divider { width: 1px; height: 20px; background: rgba(255,255,255,0.08); flex-shrink: 0; }
+
+        .rp-title {
+          font-family: 'Lora', Georgia, serif;
+          font-size: 15px;
+          font-weight: 600;
+          color: #e8e0d0;
+          flex: 1;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .rp-doc-badge {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 11px;
+          color: #6a6050;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.07);
+          padding: 4px 10px;
+          border-radius: 99px;
+          flex-shrink: 0;
+        }
+        .rp-doc-badge span { color: #c4a464; font-family: monospace; }
+
+        /* Body */
+        .rp-body {
+          display: flex;
+          flex: 1;
+          overflow: hidden;
+        }
+
+        /* Chat column */
+        .rp-chat-col {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          border-right: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .rp-messages {
+          flex: 1;
+          overflow-y: auto;
+          padding: 28px 28px 12px;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255,255,255,0.08) transparent;
+        }
+        .rp-messages::-webkit-scrollbar { width: 4px; }
+        .rp-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+
+        .rp-empty-state {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          gap: 12px;
+          color: #5a5040;
+          padding: 40px;
+          text-align: center;
+        }
+        .rp-empty-icon {
+          font-size: 40px;
+          opacity: 0.4;
+          margin-bottom: 4px;
+        }
+        .rp-empty-state h3 {
+          font-family: 'Lora', Georgia, serif;
+          font-size: 16px;
+          color: #7a7060;
+          font-weight: 600;
+        }
+        .rp-empty-state p {
+          font-size: 13px;
+          color: #4a4030;
+          line-height: 1.6;
+          max-width: 280px;
+        }
+
+        .rp-typing {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 0 0 16px 42px;
+          color: #6a6050;
+          font-size: 13px;
+          font-style: italic;
+          font-family: 'Lora', Georgia, serif;
+        }
+        .rp-typing-dots { display: flex; gap: 4px; }
+        .rp-typing-dots span {
+          width: 5px; height: 5px; border-radius: 50%;
+          background: #c4a464;
+          animation: typingBounce 1.2s ease-in-out infinite;
+        }
+        .rp-typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .rp-typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        /* Input area */
+        .rp-input-area {
+          padding: 16px 20px 20px;
+          border-top: 1px solid rgba(255,255,255,0.06);
+          background: rgba(15,13,10,0.5);
+          flex-shrink: 0;
+        }
+
+        .rp-error {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 12px;
+          color: #e07070;
+          background: rgba(200,80,80,0.08);
+          border: 1px solid rgba(200,80,80,0.15);
+          border-radius: 8px;
+          padding: 8px 12px;
+          margin-bottom: 10px;
+        }
+
+        .rp-textarea-wrap {
+          display: flex;
+          gap: 10px;
+          align-items: flex-end;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.09);
+          border-radius: 14px;
+          padding: 12px 12px 10px 16px;
+          transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .rp-textarea-wrap:focus-within {
+          border-color: rgba(196,164,100,0.35);
+          box-shadow: 0 0 0 3px rgba(196,164,100,0.06);
+        }
+
+        .rp-textarea {
+          flex: 1;
+          background: transparent;
+          border: none;
+          outline: none;
+          resize: none;
+          color: #d4cfc8;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 14px;
+          line-height: 1.6;
+          max-height: 120px;
+          overflow-y: auto;
+          scrollbar-width: none;
+        }
+        .rp-textarea::placeholder { color: #4a4030; }
+        .rp-textarea::-webkit-scrollbar { display: none; }
+
+        .rp-send-btn {
+          width: 36px; height: 36px;
+          border-radius: 10px;
+          border: none;
+          background: linear-gradient(135deg, #c4a464, #8a6a30);
+          color: #1a1510;
+          cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
+          font-size: 16px;
+          transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+          box-shadow: 0 2px 10px rgba(196,164,100,0.25);
+        }
+        .rp-send-btn:hover:not(:disabled) { opacity: 0.9; transform: scale(1.05); box-shadow: 0 4px 14px rgba(196,164,100,0.35); }
+        .rp-send-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+
+        .rp-hint {
+          text-align: center;
+          font-size: 11px;
+          color: #3a3020;
+          margin-top: 8px;
+        }
+
+        /* Sources panel */
+        .rp-sources-col {
+          width: 320px;
+          flex-shrink: 0;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+
+        .rp-sources-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 20px;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          flex-shrink: 0;
+        }
+        .rp-sources-title {
+          font-family: 'Lora', Georgia, serif;
+          font-size: 13px;
+          font-weight: 600;
+          color: #8a8070;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .rp-sources-count {
+          background: rgba(196,164,100,0.15);
+          color: #c4a464;
+          font-size: 11px;
+          padding: 2px 7px;
+          border-radius: 99px;
+          font-family: 'DM Sans', sans-serif;
+          font-style: normal;
+          letter-spacing: 0;
+        }
+
+        .rp-sources-body {
+          flex: 1;
+          overflow-y: auto;
+          padding: 16px;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255,255,255,0.06) transparent;
+        }
+        .rp-sources-body::-webkit-scrollbar { width: 3px; }
+        .rp-sources-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+
+        .rp-sources-empty {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          gap: 8px;
+          color: #3a3020;
+          text-align: center;
+          padding: 32px 20px;
+          font-size: 13px;
+          font-family: 'Lora', Georgia, serif;
+          font-style: italic;
+        }
+
+        /* Animations */
+        @keyframes fadeSlideIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes typingBounce {
+          0%, 60%, 100% { transform: translateY(0); }
+          30% { transform: translateY(-5px); }
+        }
+      `}</style>
+
+      <div className="research-page">
+        {/* Header */}
+        <header className="rp-header">
+          <Link to="/" className="rp-back">
+            ← Quay lại
+          </Link>
+          <div className="rp-divider" />
+          <h1 className="rp-title">Nghiên cứu tài liệu</h1>
+          <div className="rp-doc-badge">
+            ID <span>{shortId}…</span>
+          </div>
+        </header>
+
+        {/* Body */}
+        <div className="rp-body">
+
+          {/* Chat column */}
+          <div className="rp-chat-col">
+            <div className="rp-messages">
+              {messages.length === 0 && !loading ? (
+                <div className="rp-empty-state">
+                  <div className="rp-empty-icon">✦</div>
+                  <h3>Bắt đầu nghiên cứu</h3>
+                  <p>Đặt câu hỏi về nội dung tài liệu để nhận phân tích chi tiết từ AI.</p>
+                </div>
+              ) : (
+                messages.map((msg, i) => (
+                  <MessageBubble key={`${msg.role}-${i}`} msg={msg} index={i} />
+                ))
+              )}
+
+              {loading && (
+                <div className="rp-typing">
+                  <div className="rp-typing-dots">
+                    <span /><span /><span />
+                  </div>
+                  Đang phân tích tài liệu...
+                </div>
+              )}
+              <div ref={bottomRef} />
+            </div>
+
+            {/* Input */}
+            <div className="rp-input-area">
+              {error && (
+                <div className="rp-error">
+                  ⚠ {error}
+                </div>
+              )}
+              <div className="rp-textarea-wrap">
+                <textarea
+                  ref={textareaRef}
+                  className="rp-textarea"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Đặt câu hỏi về tài liệu..."
+                  disabled={loading}
+                  rows={2}
+                  maxLength={2000}
+                />
+                <button
+                  className="rp-send-btn"
+                  onClick={handleSubmit}
+                  disabled={loading || !input.trim()}
+                  title="Gửi (Enter)"
+                >
+                  ↑
+                </button>
+              </div>
+              <p className="rp-hint">Enter để gửi · Shift+Enter xuống dòng</p>
+            </div>
+          </div>
+
+          {/* Sources panel */}
+          <div className="rp-sources-col">
+            <div className="rp-sources-header">
+              <div className="rp-sources-title">
+                Nguồn trích dẫn
+                {sources.length > 0 && (
+                  <span className="rp-sources-count">{sources.length}</span>
+                )}
+              </div>
+            </div>
+            <div className="rp-sources-body">
+              {sources.length === 0 ? (
+                <div className="rp-sources-empty">
+                  Các đoạn văn bản liên quan sẽ hiển thị tại đây sau khi bạn đặt câu hỏi.
+                </div>
+              ) : (
+                sources.map((src, i) => (
+                  <SourceCard key={src.chunk_id || src.url || i} source={src} index={i} />
+                ))
+              )}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </>
+  );
 }

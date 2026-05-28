@@ -1,48 +1,57 @@
-function toScore(value) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return null
-  return `${Math.round(value * 100)}%`
+function formatScore(score) {
+  if (typeof score !== "number" || Number.isNaN(score)) return null;
+  const normalized = score <= 1 ? score * 100 : score;
+  return `${Math.round(normalized)}%`;
 }
 
 export default function SourceCard({ source }) {
-  if (!source) return null
+  if (!source) return null;
 
-  const section  = source.section || source.title || source.document_name || 'Nguồn tham chiếu'
-  const docName  = source.document_name || source.filename || 'Tài liệu đã chọn'
-  const page     = source.page || source.page_start
-  const pageEnd  = source.page_end
-  const pageText = page
-    ? pageEnd && pageEnd !== page
-      ? `Trang ${page}–${pageEnd}`
-      : `Trang ${page}`
-    : 'Không rõ vị trí'
-  const score   = toScore(source.score)
-  const snippet = source.snippet || source.content || source.text || 'Không có đoạn trích phù hợp.'
-  const url     = source.url || source.link
+  const title =
+    source.title ||
+    source.source_name ||
+    `Nguồn #${source.chunk_id || "không rõ"}`;
+  const url = source.url || source.link;
+  const snippet = source.snippet || source.summary || source.content;
+  const publishedAt = source.published_at || source.date;
+  const page = source.page;
+  const scoreText = formatScore(source.score || source.relevance);
 
   return (
-    <article className="source-card fade-in">
-      <header>
-        <h4>{section}</h4>
-        <span className="page-badge">{pageText}</span>
-      </header>
-
-      <div className="source-doc">{docName}</div>
-
-      <p>{snippet}</p>
-
-      <footer className="source-footer">
-        {score && <span className="source-score">Độ liên quan: {score}</span>}
-        {url && (
+    <div
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: 8,
+        padding: 10,
+        marginBottom: 8,
+      }}
+    >
+      <div style={{ marginBottom: 6 }}>
+        {url ? (
           <a
-            className="source-open"
             href={url}
             target="_blank"
             rel="noreferrer"
+            style={{ fontWeight: 600 }}
           >
-            Mở chi tiết ↗
+            {title}
           </a>
+        ) : (
+          <span style={{ fontWeight: 600 }}>{title}</span>
         )}
-      </footer>
-    </article>
-  )
+      </div>
+
+      <small>
+        {typeof page === "number" ? `Trang ${page}` : "Không rõ trang"}
+        {scoreText ? ` · Độ liên quan: ${scoreText}` : ""}
+        {publishedAt ? ` · ${publishedAt}` : ""}
+      </small>
+
+      {snippet && (
+        <p style={{ fontSize: 13, marginTop: 6, whiteSpace: "pre-wrap" }}>
+          {snippet}
+        </p>
+      )}
+    </div>
+  );
 }

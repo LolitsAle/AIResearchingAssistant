@@ -1,40 +1,61 @@
-# AI Researching Assistant
+# 🔬 AI Research Assistant
 
-## Required Stack
-- Backend: FastAPI + Python (Render)
-- Frontend: React + Vite (Vercel)
-- PDF Parse: pdfplumber
-- Embedding: Google text-embedding-004
-- Vector DB: Supabase PostgreSQL + pgvector
-- LLM: Gemini 1.5 Flash
+Hệ thống hỗ trợ đọc và phân tích tài liệu học thuật sử dụng RAG (Retrieval-Augmented Generation).
 
-## Backend setup
-1. Copy `backend/.env.example` to `backend/.env` and fill envs.
-2. Install dependencies: `pip install -r backend/requirements.txt`
-3. Start API: `uvicorn app.main:app --host 0.0.0.0 --port 8000` (run in `backend/`).
+## 🏗️ Kiến trúc hệ thống
 
-### Render deploy
-Start command:
-`uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+```
+PDF Upload ──► FastAPI ──► Parse & Chunk ──► Gemini Embedding ──► Supabase (pgvector)
+                                                                         │
+User Question ──► FastAPI ──► Gemini Embedding ──► Vector Search ────────┘
+                                                         │
+                                              Top-k Chunks + Prompt
+                                                         │
+                                                  Gemini Flash ──► Answer + Sources
+```
 
-Required envs:
-- GOOGLE_API_KEY
-- GEMINI_MODEL
-- GOOGLE_EMBEDDING_MODEL
-- SUPABASE_URL
-- SUPABASE_SERVICE_ROLE_KEY
-- DATABASE_URL
-- CORS_ORIGINS
+## 📁 Cấu trúc dự án
 
-## Frontend setup
-1. Copy `frontend/.env.example` to `frontend/.env`.
-2. `npm install`
-3. `npm run dev`
+```
+AIResearchingAssistant/
+├── backend/          # FastAPI backend
+├── frontend/         # React frontend
+└── docs/             # Tài liệu, API contract
+```
 
-### Vercel deploy
-- Build command: `npm run build`
-- Output directory: `dist`
-- Env: `VITE_API_BASE_URL=https://<render-backend-url>/api`
 
-## Notes on old stack
-- Ollama/Chroma/FAISS/PyMuPDF flows are deprecated and removed from the main runtime flow.
+## 🚀 Tech Stack
+
+| Layer | Công cụ |
+|-------|---------|
+| Backend | FastAPI + Python |
+| Frontend | React + Vite |
+| PDF Parse | pdfplumber |
+| Embedding | Google text-embedding-004 |
+| Vector DB | Supabase + pgvector |
+| LLM | Gemini 1.5 Flash |
+| Deploy BE | Render |
+| Deploy FE | Vercel |
+
+## 📋 Tài liệu
+
+- [API Contract](./docs/api_contract.md)
+- [Architecture](./docs/architecture.md)
+- [Backend README](./backend/README.md)
+- [Frontend README](./frontend/README.md)
+
+## ⚙️ Setup nhanh
+
+```bash
+# Backend
+cd backend
+cp .env.example .env   # Điền API keys
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+
+# Frontend
+cd frontend
+cp .env.example .env   # Điền VITE_API_URL
+npm install
+npm run dev
+```

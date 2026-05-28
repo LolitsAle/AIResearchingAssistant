@@ -1,66 +1,72 @@
-function formatDate(value) {
-  if (!value) return null
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return null
-  return parsed.toLocaleDateString('vi-VN', { day: '2-digit', month: 'short', year: 'numeric' })
-}
+import { Trash2, FileText, ChevronRight } from 'lucide-react';
 
-function toStatus(status) {
-  const normalized = String(status || '').toLowerCase()
-  if (normalized.includes('process') || normalized.includes('pending'))
-    return { label: 'Đang xử lý', tone: 'processing' }
-  if (normalized.includes('error') || normalized.includes('fail'))
-    return { label: 'Lỗi', tone: 'error' }
-  return { label: 'Sẵn sàng', tone: 'ready' }
-}
-
-export default function DocumentList({
-  documents = [],
-  selectedId,
-  onSelect,
-  onDelete,
-}) {
-  if (!documents.length)
-    return <div className="doc-empty">Chưa có tài liệu nào.</div>
+export default function DocumentList({ documents, onSelect, onDelete }) {
+  // Trạng thái trống (Empty State) nhìn cho xịn thay vì thẻ <p> cùi bắp
+  if (!documents || documents.length === 0) {
+    return (
+      <div className="text-center py-12 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl">
+        <FileText className="mx-auto h-12 w-12 text-gray-300 mb-3" />
+        <p className="text-gray-500 font-medium">Chưa có tài liệu nào.</p>
+        <p className="text-sm text-gray-400 mt-1">Hãy kéo thả file PDF ở khung phía trên nhé!</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="doc-list">
-      {documents.map((doc) => {
-        const docId     = doc?.id || doc?.doc_id
-        const title     = doc?.title || doc?.filename || 'Tài liệu chưa đặt tên'
-        const status    = toStatus(doc?.status)
-        const createdAt = formatDate(doc?.created_at || doc?.createdAt)
-
-        return (
-          <article
-            key={docId}
-            className={`doc-item fade-in ${String(selectedId) === String(docId) ? 'is-active' : ''}`}
-            onClick={() => onSelect?.(docId)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => e.key === 'Enter' && onSelect?.(docId)}
-          >
-            <div className="doc-main">
-              <h4>📄 {title}</h4>
-              <div className="doc-meta">
-                <span className={`status-badge ${status.tone}`}>{status.label}</span>
-                {createdAt && <span>{createdAt}</span>}
+    <ul className="space-y-3">
+      {documents.map((doc) => (
+        <li
+          key={doc.doc_id}
+          // Biến cả cái khối này thành thẻ có thể click để navigate
+          onClick={() => onSelect(doc.doc_id)}
+          className="group flex items-center justify-between p-4 bg-white border border-gray-200 rounded-xl hover:border-blue-400 hover:shadow-md transition-all cursor-pointer"
+        >
+          {/* Cột trái: Icon và Thông tin tài liệu */}
+          <div className="flex items-start space-x-4 overflow-hidden">
+            <div className="bg-blue-50 p-3 rounded-lg text-blue-600 flex-shrink-0">
+              <FileText size={24} />
+            </div>
+            
+            <div className="min-w-0 flex-1">
+              <h3 className="font-semibold text-gray-900 truncate" title={doc.filename}>
+                {doc.filename}
+              </h3>
+              
+              <div className="flex items-center text-xs text-gray-500 mt-1 space-x-2">
+                <span className="bg-gray-100 px-2 py-0.5 rounded">
+                  {doc.page_count} trang
+                </span>
+                <span>•</span>
+                <span>{doc.chunk_count} chunks</span>
+                {/* Format ngày tháng đàng hoàng dựa theo created_at từ API */}
+                <span>•</span>
+                <span>{new Date(doc.created_at).toLocaleDateString('vi-VN')}</span>
               </div>
             </div>
+          </div>
 
+          {/* Cột phải: Các nút hành động */}
+          <div className="flex items-center space-x-1 pl-4 flex-shrink-0">
             <button
-              className="doc-delete"
               onClick={(e) => {
-                e.stopPropagation()
-                onDelete?.(docId)
+                // QUAN TRỌNG: Ngăn chặn event nổi bọt lên thẻ li
+                e.stopPropagation(); 
+                onDelete(doc.doc_id);
               }}
-              aria-label="Xóa tài liệu"
+              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              title="Xóa tài liệu"
             >
-              ×
+              <Trash2 size={18} />
             </button>
-          </article>
-        )
-      })}
-    </div>
-  )
+            
+            {/* Icon mũi tên chỉ hiện ra hoặc đổi màu khi hover vào cả cục (group-hover) */}
+            <ChevronRight 
+              size={20} 
+              className="text-gray-300 group-hover:text-blue-500 transition-colors ml-2" 
+            />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
 }

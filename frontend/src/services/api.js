@@ -1,62 +1,113 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
+/**
+ * FE1 + FE2: Toàn bộ HTTP calls tới backend đều đi qua file này.
+ * Đã tích hợp Header Authorization (Token) và Auth APIs.
+ */
+import axios from "axios";
 
-const getToken = () => localStorage.getItem('access_token')
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-async function request(path, options = {}) {
+const axiosInstance = axios.create({
+  baseURL: BASE_URL,
+});
+
+function normalizeError(err) {
+  if (axios.isAxiosError(err)) {
+    const apiError = err.response?.data?.error;
+    const message = apiError?.message || err.message || "Không thể kết nối server";
+    const error = new Error(message);
+    error.code = apiError?.code || "NETWORK_ERROR";
+    error.status = err.response?.status;
+    error.details = err.response?.data;
+    return error;
+  }
+
+  const fallback = new Error(err?.message || "Đã có lỗi xảy ra");
+  fallback.code = "UNKNOWN_ERROR";
+  return fallback;
+}
+
+async function unwrapRequest(requestFn) {
   try {
-    const headers = { ...(options.headers || {}) }
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
-    const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers })
-    const text = await response.text()
-    let data = {}
-    if (text) {
-      try { data = JSON.parse(text) } catch { data = { detail: text } }
+    const { data } = await requestFn();
+
+    if (data?.success === false) {
+      const error = new Error(data?.error?.message || "Yêu cầu thất bại");
+      error.code = data?.error?.code || "API_ERROR";
+      error.details = data;
+      throw error;
     }
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        localStorage.removeItem('access_token')
-      }
-      throw new Error(data?.error?.message || data?.detail || `Request thất bại (${response.status})`)
-    }
-    return data
-  } catch (error) {
-    if (error instanceof TypeError) {
-      throw new Error('Không kết nối được backend.')
-    }
-    throw error
+    return data?.data;
+  } catch (err) {
+    throw normalizeError(err);
   }
 }
 
-const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-
+// Bọc tất cả vào một object `api` để tương thích với các file UI đã viết
 export const api = {
-  register: (payload) => request('/auth/register', json('POST', payload)),
-  login: (payload) => request('/auth/login', json('POST', payload)),
-  loginWithGoogle: (credential) => request('/auth/google', json('POST', { credential })),
-  getMe: () => request('/auth/me'),
-  logout: () => request('/auth/logout', { method: 'POST' }),
+  // ================= AUTH API (Không cần token) =================
+  login: (email, password) => {
+    return unwrapRequest(() => axiosInstance.post("/api/auth/login", { email, password }));
+  },
 
-  getHealth: () => request('/health'),
-  getWorkspaces: () => request('/workspaces'),
-  createWorkspace: (payload) => request('/workspaces', json('POST', payload)),
-  getWorkspace: (workspaceId) => request(`/workspaces/${workspaceId}`),
-  updateWorkspace: (workspaceId, payload) => request(`/workspaces/${workspaceId}`, json('PATCH', payload)),
-  deleteWorkspace: (workspaceId) => request(`/workspaces/${workspaceId}`, { method: 'DELETE' }),
-  getWorkspaceSources: (workspaceId) => request(`/workspaces/${workspaceId}/sources`),
-  uploadDocument: (workspaceId, file) => { const fd = new FormData(); fd.append('file', file); return request(`/workspaces/${workspaceId}/documents/upload`, { method: 'POST', body: fd }) },
-  deleteDocument: (documentId) => request(`/documents/${documentId}`, { method: 'DELETE' }),
-  updateSourceSelection: (workspaceId, selectedDocumentIds) => request(`/workspaces/${workspaceId}/sources/selection`, json('PATCH', { selected_document_ids: selectedDocumentIds })),
-  getWorkspaceChat: (workspaceId) => request(`/workspaces/${workspaceId}/chat`),
-  createNewChat: (workspaceId) => request(`/workspaces/${workspaceId}/chat/new`, { method: 'POST' }),
-  sendWorkspaceMessage: (workspaceId, payload) => request(`/workspaces/${workspaceId}/chat`, json('POST', payload)),
-  runStudioTemplate: (workspaceId, payload) => request(`/workspaces/${workspaceId}/studio/run`, json('POST', payload)),
-  getNotes: (workspaceId) => request(`/workspaces/${workspaceId}/notes`),
-  createNote: (workspaceId, payload) => request(`/workspaces/${workspaceId}/notes`, json('POST', payload)),
-  updateNote: (noteId, payload) => request(`/notes/${noteId}`, json('PATCH', payload)),
-  deleteNote: (noteId) => request(`/notes/${noteId}`, { method: 'DELETE' }),
-  getAnalytics: (workspaceId) => request(`/workspaces/${workspaceId}/analytics`),
-  getSettings: () => request('/settings'),
-  updateSettings: (payload) => request('/settings', json('PATCH', payload)),
-}
+  register: (email, password) => {
+    return unwrapRequest(() => axiosInstance.post("/api/auth/register", { email, password }));
+  },
+
+  logout: (token) => {
+    return unwrapRequest(() => axiosInstance.post("/api/auth/logout", {}, {
+      headers: { Authorization: `Bearer ${token}` }
+    }));
+  },
+
+  // ================= DOCUMENTS & CHAT API (Bắt buộc có token) =================
+  getDocuments: (token) => {
+    return unwrapRequest(() => axiosInstance.get("/api/documents", {
+      headers: { Authorization: `Bearer ${token}` }
+    }));
+  },
+
+  uploadDocument: (file, token, onProgress) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/documents/upload", formData, {
+        headers: { 
+          //"Content-Type": "multipart/form-data",
+          "Authorization": `Bearer ${token}`
+        },
+        onUploadProgress: (e) => {
+          if (onProgress && e.total) {
+            onProgress(Math.round((e.loaded * 100) / e.total));
+          }
+        },
+      })
+    );
+  },
+
+  deleteDocument: (docId, token) => {
+    return unwrapRequest(() => axiosInstance.delete(`/api/documents/${docId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }));
+  },
+
+  summarizeDocument: (docId, token) => {
+    return unwrapRequest(() => axiosInstance.post(`/api/documents/${docId}/summarize`, {}, {
+      headers: { Authorization: `Bearer ${token}` }
+    }));
+  },
+
+  sendResearchQuery: ({ docId, question, chatHistory = [] }, token) => {
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/chat/ask", {
+        doc_id: docId,
+        question,
+        chat_history: chatHistory,
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    );
+  }
+};
+

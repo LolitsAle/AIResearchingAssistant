@@ -1,74 +1,127 @@
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, EmailStr
-from sqlalchemy.orm import Session
+# app/routers/auth.py
+"""Authentication routes using Supabase Auth."""
 
-from app.core.errors import AppError
-from app.db.database import get_db
-from app.db.models import User
-from app.services.auth_service import create_access_token, get_current_user, hash_password, verify_google_credential, verify_password
+from typing import Any, Dict
+from fastapi import APIRouter, HTTPException, Request, status
+from supabase import create_client, Client
+from app.models.schemas import RegisterRequest, LoginRequest
+from app.dependencies import get_current_user
+from app.db.supabase_client import supabase
+from app.config import settings
 
-router = APIRouter()
-
-
-class RegisterRequest(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
+# PREFIX khớp với api_contract.md: /api/auth/*
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
+def _anon_client() -> Client:
+    """Tạo client mới dùng anon key cho mỗi request auth.
+    Tránh lỗi session bị lưu trong singleton supabase client.
+    """
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
 
 
-class GoogleLoginRequest(BaseModel):
-    credential: str
+@router.post("/register")
+async def register(payload: RegisterRequest) -> Dict[str, Any]:
+    client = _anon_client()
+    try:
+        resp = client.auth.sign_up({"email": payload.email, "password": payload.password})
+    except Exception as e:
+        print(f"LỖI ĐĂNG KÝ: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Failed to register user"},
+        )
 
+    error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
+    user = getattr(resp, "user", None) or (resp.get("data", {}) or {}).get("user")
 
-def _serialize_user(user: User) -> dict:
-    return {'id': user.id, 'name': user.name, 'email': user.email, 'avatar_url': user.avatar_url}
+    if error:
+        message = getattr(error, "message", str(error))
+        if "already registered" in message.lower() or "duplicate" in message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "EMAIL_TAKEN", "message": "Email đã được đăng ký"},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INTERNAL_ERROR", "message": message},
+        )
 
-
-@router.post('/auth/register')
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.email == payload.email.lower()).first():
-        raise AppError('Email này đã được đăng ký.', 409)
-    user = User(name=payload.name.strip() or 'User', email=payload.email.lower(), hashed_password=hash_password(payload.password), auth_provider='password')
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    token = create_access_token(user.id)
-    return {'user': _serialize_user(user), 'access_token': token}
-
-
-@router.post('/auth/login')
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == payload.email.lower()).first()
-    if not user or not user.hashed_password or not verify_password(payload.password, user.hashed_password):
-        raise AppError('Email hoặc mật khẩu không đúng.', 401)
-    return {'user': _serialize_user(user), 'access_token': create_access_token(user.id)}
-
-
-
-
-@router.post('/auth/google')
-def login_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
-    info = verify_google_credential(payload.credential)
-    email = (info.get('email') or '').lower()
-    if not email:
-        raise AppError('Không thể đăng nhập bằng Google.', 401)
-    user = db.query(User).filter(User.email == email).first()
     if not user:
-        user = User(name=info.get('name') or email.split('@')[0], email=email, avatar_url=info.get('picture'), auth_provider='google', hashed_password=None)
-        db.add(user); db.commit(); db.refresh(user)
-    return {'user': _serialize_user(user), 'access_token': create_access_token(user.id)}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Unexpected response from auth provider"},
+        )
+
+    user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
+    email = getattr(user, "email", None) or (user.get("email") if isinstance(user, dict) else None)
+    return {"success": True, "data": {"user_id": user_id, "email": email}}
 
 
-@router.get('/auth/me')
-def me(current_user: User = Depends(get_current_user)):
-    return {'user': _serialize_user(current_user)}
+@router.post("/login")
+async def login(payload: LoginRequest) -> Dict[str, Any]:
+    client = _anon_client()
+    try:
+        resp = client.auth.sign_in_with_password({"email": payload.email, "password": payload.password})
+    except Exception as e:
+        print(f"LỖI ĐĂNG NHẬP: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Authentication service error"},
+        )
+
+    error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
+    if error:
+        message = getattr(error, "message", str(error))
+        if "email not confirmed" in message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "EMAIL_NOT_CONFIRMED", "message": "Email chưa được xác nhận. Vui lòng kiểm tra hộp thư."},
+            )
+        if any(w in message.lower() for w in ["invalid", "wrong", "credentials"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "INVALID_CREDENTIALS", "message": "Sai email hoặc mật khẩu. Vui lòng thử lại!"},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INTERNAL_ERROR", "message": message},
+        )
+
+    session = getattr(resp, "session", None)
+    user = getattr(resp, "user", None)
+    if not session or not user:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Failed to obtain access token"},
+        )
+
+    access_token = getattr(session, "access_token", None)
+    user_id = getattr(user, "id", None)
+    email = getattr(user, "email", None)
+
+    return {
+        "success": True,
+        "data": {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {"user_id": user_id, "email": email},
+        },
+    }
 
 
-@router.post('/auth/logout')
-def logout():
-    return {'message': 'Logged out'}
+@router.post("/logout")
+async def logout(request: Request) -> Dict[str, Any]:
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHORIZED", "message": "Missing authorization token"},
+        )
+
+    try:
+        supabase.auth.sign_out()
+    except Exception:
+        pass  # sign_out idempotent — luôn trả success
+
+    return {"success": True, "data": {"message": "Đăng xuất thành công"}}

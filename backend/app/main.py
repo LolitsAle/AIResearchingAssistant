@@ -1,31 +1,27 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers import documents, chat, auth
+from app.config import settings
 
-from app.core.config import settings
-from app.core.errors import register_exception_handlers
-from app.db.init_db import init_db
-from app.routers.auth import router as auth_router
-from app.routers.health import router as health_router
-from app.routers.workspaces import router as workspaces_router
-from app.routers.workspace_features import router as workspace_features_router
-
-app = FastAPI(title='AI Researching Assistant API', version='2.0.0')
+app = FastAPI(
+    title="AI Research Assistant API",
+    version="1.0.0",
+    docs_url="/docs",
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-register_exception_handlers(app)
-app.include_router(auth_router, prefix='/api', tags=['auth'])
-app.include_router(health_router, prefix='/api', tags=['health'])
-app.include_router(workspaces_router, prefix='/api', tags=['workspaces'])
-app.include_router(workspace_features_router, prefix='/api', tags=['workspace'])
+app.include_router(auth.router)
+app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 
-@app.on_event('startup')
-def on_startup() -> None:
-    init_db()
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "version": "1.0.0"}
