@@ -1,26 +1,49 @@
--- System Library schema for admin/dev managed documents.
--- Apply in Supabase after pgvector is enabled. Backend also checks access/vector
--- readiness, so RLS can stay conservative when using service_role.
+-- System Library schema for admin-managed documents.
+-- Apply in Supabase after pgvector is enabled. Old Free/Pro/VIP fields can remain
+-- in existing databases as deprecated columns, but the app no longer reads them.
 
 create extension if not exists vector;
+
+alter table if exists public.users
+  add column if not exists role text not null default 'user';
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'users_role_check') then
+    alter table public.users add constraint users_role_check check (role in ('user', 'admin'));
+  end if;
+exception when undefined_table then
+  null;
+end $$;
 
 create table if not exists public.system_documents (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   filename text not null,
   file_type text,
-  description text,
-  ai_summary text,
+  storage_path text,
+  download_url text,
+  category text,
+  tags text[] not null default '{}',
+  summary text,
   page_count integer,
   word_count integer,
-  difficulty_level text check (difficulty_level in ('basic', 'intermediate', 'advanced')) default 'intermediate',
-  subject_area text default 'Khác',
-  tags text[] not null default '{}',
-  access_level text not null check (access_level in ('free', 'pro', 'vip')) default 'free',
   is_vector_ready boolean not null default false,
+  created_by uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.system_documents
+  add column if not exists storage_path text,
+  add column if not exists download_url text,
+  add column if not exists category text,
+  add column if not exists summary text,
+  add column if not exists created_by uuid;
+
+-- Deprecated compatibility columns from the previous plan-gated design. Keep them
+-- if already present, but do not use them in API/UI anymore:
+-- access_level, is_vip, is_pro, required_plan, difficulty_level, subject_area, ai_summary.
 
 create table if not exists public.system_document_chunks (
   id uuid primary key default gen_random_uuid(),
@@ -40,28 +63,27 @@ create table if not exists public.system_document_bookmarks (
   unique(user_id, document_id)
 );
 
-create index if not exists idx_system_documents_subject on public.system_documents(subject_area);
-create index if not exists idx_system_documents_access on public.system_documents(access_level);
+alter table public.documents
+  add column if not exists source_type text not null default 'user_document',
+  add column if not exists source_id uuid;
+
+create index if not exists idx_system_documents_category on public.system_documents(category);
 create index if not exists idx_system_documents_vector_ready on public.system_documents(is_vector_ready);
 create index if not exists idx_system_documents_tags on public.system_documents using gin(tags);
 create index if not exists idx_system_document_bookmarks_user on public.system_document_bookmarks(user_id);
 create index if not exists idx_system_document_chunks_document on public.system_document_chunks(document_id);
 create index if not exists idx_system_document_chunks_embedding on public.system_document_chunks using ivfflat (embedding vector_cosine_ops) with (lists = 100);
-
-alter table public.research_sessions
-  add column if not exists source_type text not null default 'user_document',
-  add column if not exists selected_sources jsonb not null default '[]'::jsonb,
-  add column if not exists user_id uuid;
+create index if not exists idx_documents_source on public.documents(source_type, source_id);
 
 alter table public.system_documents enable row level security;
 alter table public.system_document_bookmarks enable row level security;
 
 do $$
 begin
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'system_documents' and policyname = 'Users can read free system documents') then
-    create policy "Users can read free system documents"
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'system_documents' and policyname = 'Users can read system documents') then
+    create policy "Users can read system documents"
       on public.system_documents for select
-      using (access_level = 'free');
+      using (true);
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'system_document_bookmarks' and policyname = 'Users can read own system bookmarks') then
@@ -83,7 +105,6 @@ begin
   end if;
 end $$;
 
--- Keep updated_at stable for admin/dev edits.
 create or replace function public.set_system_documents_updated_at()
 returns trigger
 language plpgsql
@@ -99,8 +120,6 @@ create trigger trg_system_documents_updated_at
 before update on public.system_documents
 for each row execute function public.set_system_documents_updated_at();
 
--- Semantic document search used by backend service `match_system_documents`.
--- It ranks documents by their best matching chunk while still returning one row per document.
 create or replace function public.match_system_documents(
   query_embedding vector(768),
   match_count int default 20,

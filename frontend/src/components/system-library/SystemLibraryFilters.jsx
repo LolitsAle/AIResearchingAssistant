@@ -2,17 +2,11 @@ import { X } from 'lucide-react';
 
 const FILTERS = {
   categories: ['Kinh tế', 'Kỹ thuật', 'Luật', 'Văn học', 'Công nghệ', 'Y học', 'Khác'],
-  file_types: ['PDF', 'DOCX', 'Slide', 'EPUB', 'TXT/MD'],
+  file_types: ['PDF', 'DOCX', 'TXT', 'MD'],
   updated_ranges: [
-    { value: 'latest', label: 'Mới nhất' },
     { value: 'week', label: 'Tuần này' },
     { value: 'month', label: 'Tháng này' },
     { value: 'year', label: 'Năm nay' },
-  ],
-  access_levels: [
-    { value: 'free', label: 'Free' },
-    { value: 'pro', label: 'Pro' },
-    { value: 'vip', label: 'VIP' },
   ],
   vector_status: [
     { value: 'ready', label: 'Sẵn sàng cho AI' },
@@ -50,30 +44,19 @@ export default function SystemLibraryFilters({ filters, selectedTags, onToggleFi
           <p>Facet filters</p>
           <strong>Lọc thông minh</strong>
         </div>
-        {hasFilters && (
-          <button type="button" onClick={onClear} className="sl-link-button">
-            Xóa bộ lọc
-          </button>
-        )}
+        {hasFilters && <button type="button" onClick={onClear} className="sl-link-button">Xóa bộ lọc</button>}
       </div>
-
       {selectedTags.length > 0 && (
         <div className="sl-filter-group">
           <h3>Tags đang lọc</h3>
           <div className="sl-active-tags">
-            {selectedTags.map((tag) => (
-              <button key={tag} type="button" className="sl-tag is-selected" onClick={() => onToggleTag(tag)}>
-                #{tag} <X size={12} />
-              </button>
-            ))}
+            {selectedTags.map((tag) => <button key={tag} type="button" className="sl-tag is-selected" onClick={() => onToggleTag(tag)}>#{tag} <X size={12} /></button>)}
           </div>
         </div>
       )}
-
       <FilterGroup title="Danh mục" options={FILTERS.categories} value={filters.categories} onToggle={(value) => onToggleFilter('categories', value)} />
       <FilterGroup title="Định dạng" options={FILTERS.file_types} value={filters.file_types} onToggle={(value) => onToggleFilter('file_types', value)} />
       <FilterGroup title="Cập nhật" options={FILTERS.updated_ranges} value={filters.updated_ranges} onToggle={(value) => onToggleFilter('updated_ranges', value)} />
-      <FilterGroup title="Quyền truy cập" options={FILTERS.access_levels} value={filters.access_levels} onToggle={(value) => onToggleFilter('access_levels', value)} />
       <FilterGroup title="Vector status" options={FILTERS.vector_status} value={filters.vector_status} onToggle={(value) => onToggleFilter('vector_status', value)} />
     </aside>
   );
