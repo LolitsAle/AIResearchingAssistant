@@ -50,6 +50,7 @@ export default function ChatBox({
   return (
     <div>
       <div
+        className="app-scrollbar"
         style={{
           minHeight: 320,
           maxHeight: 540,

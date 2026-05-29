@@ -21,12 +21,10 @@ const FALLBACK_SUGGESTED_PROMPTS = [
 const QUICK_ACTIONS = [
   { id: "compare", icon: "⇄", label: "So sánh tài liệu", requiresTwo: true, prompt: "Hãy so sánh các tài liệu đã chọn. Trình bày điểm giống nhau, khác nhau, phương pháp nghiên cứu, kết quả chính, đóng góp và hạn chế của từng tài liệu." },
   { id: "main_points", icon: "☑", label: "Trình bày ý chính", prompt: "Hãy trình bày các ý chính của tài liệu đã chọn theo dạng bullet rõ ràng, dễ hiểu." },
-  { id: "summarize", icon: "📄", label: "Tóm tắt tài liệu", prompt: "Hãy tóm tắt tài liệu đã chọn, gồm mục tiêu, phương pháp, kết quả và kết luận." },
   { id: "terms", icon: "?", label: "Giải thích thuật ngữ khó", prompt: "Hãy tìm và giải thích các thuật ngữ học thuật khó trong tài liệu đã chọn bằng ngôn ngữ dễ hiểu." },
   { id: "quiz_prompt", icon: "❔", label: "Tạo câu hỏi ôn tập", prompt: "Hãy tạo 1 -> 2 câu hỏi ôn tập từ tài liệu đã chọn, kèm đáp án ngắn." },
   { id: "claims", icon: "❞", label: "Trích xuất luận điểm chính", prompt: "Hãy trích xuất các luận điểm chính, bằng chứng hỗ trợ và kết luận từ tài liệu đã chọn." },
   { id: "outline", icon: "☷", label: "Tạo dàn ý nghiên cứu", prompt: "Hãy tạo một dàn ý nghiên cứu dựa trên tài liệu đã chọn, gồm các mục lớn, ý phụ và gợi ý triển khai." },
-  { id: "similar_diff", icon: "▦", label: "Tìm điểm giống và khác nhau", prompt: "Hãy tìm các điểm giống và khác nhau giữa các tài liệu đã chọn, trình bày trong bảng nếu phù hợp." },
   { id: "next_questions", icon: "✦", label: "Gợi ý câu hỏi tiếp theo", prompt: "Dựa trên các tài liệu đã chọn và cuộc trò chuyện hiện tại, hãy gợi ý các câu hỏi tiếp theo mà người dùng nên hỏi để hiểu sâu hơn nội dung nghiên cứu." },
   { id: "quiz", icon: "☑", label: "Tạo trắc nghiệm", special: "quiz" },
   { id: "test", icon: "📝", label: "Tạo bài kiểm tra", special: "test" },
@@ -87,31 +85,55 @@ function normalizeSources(rawSources = []) {
   });
 }
 
-function citationTooltip(citation) {
-  const title = citation.document_title || "Tài liệu";
-  const page = citation.page_start ? `Trang ${citation.page_start}` : "Không rõ trang";
-  const score = typeof citation.score === "number"
-    ? `Độ tin cậy ${Math.round((citation.score <= 1 ? citation.score : citation.score / 100) * 100)}%`
-    : "";
-  return [title, page, score].filter(Boolean).join(" · ");
+function formatCitationPage(citation = {}) {
+  const page = citation.page_start ?? citation.page ?? citation.page_number;
+  const pageEnd = citation.page_end;
+  if (!page) return "Không rõ trang";
+  return pageEnd && pageEnd !== page ? `Trang ${page}-${pageEnd}` : `Trang ${page}`;
 }
 
-function CitationButton({ citation, onClick }) {
+function formatCitationConfidence(citation = {}) {
+  const rawScore = citation.score ?? citation.confidence ?? citation.relevance;
+  const numericScore = typeof rawScore === "number" ? rawScore : Number(rawScore);
+  if (!Number.isFinite(numericScore)) return "Độ tin cậy chưa có";
+  const percent = numericScore >= 0 && numericScore <= 1 ? numericScore * 100 : numericScore;
+  return `Độ tin cậy ${Math.round(percent)}%`;
+}
+
+function citationTooltip(citation) {
+  return [
+    citation.document_title || "Tài liệu",
+    formatCitationPage(citation),
+    formatCitationConfidence(citation),
+  ].join(" · ");
+}
+
+function CitationHoverCard({ citation }) {
+  const snippet = citation.snippet || citation.summary || citation.content || "";
+
   return (
-    <button
-      type="button"
-      className="rp-citation-badge"
-      title={citationTooltip(citation)}
-      aria-label={`Mở nguồn ${citation.citation_index}`}
-      onClick={() => onClick?.(citation.citation_index)}
-    >
-      [{citation.citation_index}]
-    </button>
+    <span className="rp-citation-wrap">
+      <button
+        type="button"
+        className="rp-citation-badge"
+        aria-label={`Nguồn ${citation.citation_index}: ${citationTooltip(citation)}`}
+      >
+        [{citation.citation_index}]
+      </button>
+      <span className="rp-citation-popover" role="tooltip">
+        <strong>{citation.document_title || "Tài liệu"}</strong>
+        <span className="rp-citation-popover-meta">
+          <span>{formatCitationPage(citation)}</span>
+          <span>{formatCitationConfidence(citation)}</span>
+        </span>
+        {snippet && <span className="rp-citation-snippet">{snippet}</span>}
+      </span>
+    </span>
   );
 }
 
 
-function MarkdownContent({ content = "", citations = [], onCitationClick }) {
+function MarkdownContent({ content = "", citations = [] }) {
   const citationMap = useMemo(
     () => new Map(citations.map((citation) => [String(citation.citation_index), citation])),
     [citations]
@@ -130,7 +152,7 @@ function MarkdownContent({ content = "", citations = [], onCitationClick }) {
           if (href?.startsWith("citation:")) {
             const key = href.replace("citation:", "");
             const citation = citationMap.get(key);
-            if (citation) return <CitationButton citation={citation} onClick={onCitationClick} />;
+            if (citation) return <CitationHoverCard citation={citation} />;
           }
           return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
         },
@@ -141,22 +163,21 @@ function MarkdownContent({ content = "", citations = [], onCitationClick }) {
   );
 }
 
-function AnswerWithCitations({ content, citations = [], warning = null, onCitationClick }) {
+function AnswerWithCitations({ content, citations = [], warning = null }) {
   const hasInlineCitation = /\[(\d+)\]/.test(content || "");
   const shouldShowWarning = warning && !hasWarningInContent(content);
 
   return (
     <>
       {shouldShowWarning && <div className="rp-rag-warning" role="note">⚠ {warning}</div>}
-      <MarkdownContent content={content || ""} citations={citations} onCitationClick={onCitationClick} />
+      <MarkdownContent content={content || ""} citations={citations} />
       {!hasInlineCitation && citations.length > 0 && (
         <span className="rp-citation-footer">
           Nguồn:{" "}
           {citations.map((citation) => (
-            <CitationButton
+            <CitationHoverCard
               key={citation.citation_index}
               citation={citation}
-              onClick={onCitationClick}
             />
           ))}
         </span>
@@ -295,7 +316,7 @@ function QuickActionsSidebar({
       {!selectedDocumentIds.length && (
         <div className="rp-action-helper">Chọn tài liệu để sử dụng tính năng nhanh.</div>
       )}
-      <div className="rp-actions-list">
+      <div className="rp-actions-list rp-app-scrollbar">
         {actions.map((action) => {
           const quickCount = action.special === "flashcards" ? flashcardCount : action.special === "quiz" ? quizCount : 1;
           const disabled = !selectedDocumentIds.length || (action.requiresTwo && selectedDocumentIds.length < 2) || loading || ((action.special === "flashcards" || action.special === "quiz") && quickCount === 0);
@@ -351,7 +372,7 @@ function FlashcardModal({ flashcards, title = "Flashcards", warning = null, onCl
 
   return (
     <div className="rp-modal-overlay" onClick={onClose}>
-      <div className="rp-flashcard-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="rp-flashcard-modal rp-app-scrollbar" onClick={(e) => e.stopPropagation()}>
         <div className="rp-note-modal-head">
           <div>
             <div className="rp-note-modal-kicker">Flashcard</div>
@@ -465,7 +486,7 @@ function QuizModal({ mode = "quiz", quiz, title, warning = null, onClose, onSave
 
   return (
     <div className="rp-modal-overlay" onClick={onClose}>
-      <div className="rp-quiz-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="rp-quiz-modal rp-app-scrollbar" onClick={(e) => e.stopPropagation()}>
         <div className="rp-note-modal-head">
           <div>
             <div className="rp-note-modal-kicker">{mode === "test" ? "Bài kiểm tra" : "Quiz"}</div>
@@ -529,7 +550,7 @@ function NotesPanel({
         {notes.length > 0 && <span className="rp-notes-count">{notes.length}</span>}
       </div>
 
-      <div className="rp-notes-body">
+      <div className="rp-notes-body rp-app-scrollbar">
         <CitationDetail citation={activeCitation} onClose={onCloseCitation} />
 
         {loadingNotes ? (
@@ -609,7 +630,7 @@ function NotesPanel({
 
       {selectedNote && (
         <div className="rp-modal-overlay rp-note-modal-overlay" onClick={onCloseNote}>
-          <div className="rp-note-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="rp-note-modal rp-app-scrollbar" onClick={(e) => e.stopPropagation()}>
             <div className="rp-note-modal-head">
               <div>
                 <div className="rp-note-modal-kicker">Chi tiết ghi chú</div>
@@ -650,7 +671,7 @@ function NotesPanel({
               </div>
             ) : (
               <>
-                <div className="rp-note-modal-content"><MarkdownContent content={selectedNote.content} /></div>
+                <div className="rp-note-modal-content rp-app-scrollbar"><MarkdownContent content={selectedNote.content} /></div>
                 {Array.isArray(selectedNote.citations) && selectedNote.citations.length > 0 && (
                   <div className="rp-note-modal-sources">
                     <h3>Nguồn trích dẫn</h3>
@@ -681,7 +702,6 @@ function MessageBubble({
   index,
   onCopy,
   onRegenerate,
-  onCitationClick,
   onSaveNote,
   saved,
   saving,
@@ -707,7 +727,6 @@ function MessageBubble({
               content={msg.content || ""}
               citations={citations}
               warning={msg.warning}
-              onCitationClick={onCitationClick}
             />
           )}
           {regenerating && msg.content && <span style={{ opacity: 0.5 }}> ▌</span>}
@@ -915,9 +934,6 @@ export default function ResearchPage() {
     }
   };
 
-  const handleCitationClick = (citationIndex) => {
-    setActiveCitationIndex(citationIndex);
-  };
 
   const handleStop = () => {
     if (!activeRequestRef.current) return;
@@ -1497,6 +1513,11 @@ export default function ResearchPage() {
         @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #0f0d0a; }
+        .rp-app-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.06) transparent; }
+        .rp-app-scrollbar::-webkit-scrollbar { width: 3px; height: 3px; }
+        .rp-app-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .rp-app-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 999px; }
+        .rp-app-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
 
         .research-page {
           min-height: 100vh;
@@ -1536,7 +1557,7 @@ export default function ResearchPage() {
         .rp-share-btn { border: 1px solid rgba(196,164,100,0.28); background: rgba(196,164,100,0.1); color: #c4a464; border-radius: 9px; padding: 7px 11px; font-size: 12px; cursor: pointer; }
         .rp-share-btn:disabled { opacity: 0.45; cursor: not-allowed; }
         .rp-actions-col { width: 300px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid rgba(255,255,255,0.06); }
-        .rp-actions-list { flex: 1; overflow-y: auto; padding: 16px; display: grid; gap: 10px; align-content: start; }
+        .rp-actions-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px; display: grid; gap: 10px; align-content: start; }
         .rp-action-helper { margin: 14px 16px 0; border: 1px dashed rgba(196,164,100,0.22); background: rgba(196,164,100,0.06); color: #c4a464; border-radius: 12px; padding: 11px; font-size: 12px; line-height: 1.45; }
         .rp-action-card { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 13px 14px; color: #d4cfc8; cursor: pointer; font-size: 12px; transition: border-color .2s, background .2s, color .2s, transform .15s; }
         .rp-action-card:hover:not(:disabled) { border-color: rgba(196,164,100,0.35); background: rgba(196,164,100,0.06); color: #c4a464; transform: translateY(-1px); }
@@ -1568,9 +1589,7 @@ export default function ResearchPage() {
 
         .rp-body { flex: 1; display: flex; overflow: hidden; border-top: 1px solid rgba(255,255,255,0.04); }
         .rp-chat-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid rgba(255,255,255,0.06); }
-        .rp-messages { flex: 1; overflow-y: auto; padding: 28px 24px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.06) transparent; }
-        .rp-messages::-webkit-scrollbar { width: 3px; }
-        .rp-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+        .rp-messages { flex: 1; overflow-y: auto; padding: 28px 24px; }
 
         .rp-context-banner { margin: 0 auto 18px; max-width: 720px; border: 1px solid rgba(196,164,100,0.18); background: rgba(196,164,100,0.08); color: #c4a464; border-radius: 12px; padding: 10px 14px; font-size: 13px; text-align: center; }
         .rp-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 12px; text-align: center; padding: 40px; }
@@ -1599,8 +1618,16 @@ export default function ResearchPage() {
         .rp-icon-btn:hover:not(:disabled) { color: #c4a464; border-color: rgba(196,164,100,0.25); background: rgba(196,164,100,0.08); }
         .rp-icon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-        .rp-citation-badge { display: inline-flex; align-items: center; justify-content: center; margin: 0 2px; padding: 0 4px; border: none; background: rgba(196,164,100,0.12); color: #c4a464; border-radius: 5px; cursor: pointer; font: inherit; font-family: 'DM Sans', sans-serif; font-size: 12px; }
-        .rp-citation-badge:hover { background: rgba(196,164,100,0.22); }
+        .rp-citation-wrap { position: relative; display: inline-flex; align-items: center; white-space: normal; }
+        .rp-citation-badge { display: inline-flex; align-items: center; justify-content: center; margin: 0 2px; padding: 0 4px; border: none; background: rgba(196,164,100,0.12); color: #c4a464; border-radius: 5px; cursor: help; font: inherit; font-family: 'DM Sans', sans-serif; font-size: 12px; }
+        .rp-citation-badge:hover, .rp-citation-badge:focus-visible { background: rgba(196,164,100,0.22); outline: none; box-shadow: 0 0 0 2px rgba(196,164,100,0.22); }
+        .rp-citation-popover { position: absolute; left: 50%; bottom: calc(100% + 10px); z-index: 25; width: min(280px, 72vw); transform: translate(-50%, 4px); opacity: 0; pointer-events: none; padding: 11px 12px; border: 1px solid rgba(196,164,100,0.24); border-radius: 12px; background: rgba(21,18,13,0.98); box-shadow: 0 14px 36px rgba(0,0,0,0.38); color: #d4cfc8; font-family: 'DM Sans', sans-serif; font-size: 12px; line-height: 1.45; white-space: normal; transition: opacity .16s ease, transform .16s ease; }
+        .rp-citation-popover::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; transform: translateX(-50%) rotate(45deg); background: rgba(21,18,13,0.98); border-right: 1px solid rgba(196,164,100,0.24); border-bottom: 1px solid rgba(196,164,100,0.24); }
+        .rp-citation-wrap:hover .rp-citation-popover, .rp-citation-wrap:focus-within .rp-citation-popover { opacity: 1; transform: translate(-50%, 0); }
+        .rp-citation-popover strong { display: block; color: #e8e0d0; font-family: 'Lora', Georgia, serif; font-size: 13px; line-height: 1.35; margin-bottom: 8px; }
+        .rp-citation-popover-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        .rp-citation-popover-meta span { color: #c4a464; border: 1px solid rgba(196,164,100,0.18); border-radius: 999px; padding: 2px 7px; background: rgba(196,164,100,0.08); font-size: 11px; }
+        .rp-citation-snippet { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; color: #8a8070; }
         .rp-citation-footer { display: block; margin-top: 10px; color: #8a8070; font-family: 'DM Sans', sans-serif; font-size: 12px; }
 
         .rp-typing { display: flex; align-items: center; gap: 10px; padding: 12px 16px; width: fit-content; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 18px 18px 18px 4px; margin-bottom: 16px; font-size: 13px; color: #8a8070; font-family: 'Lora', Georgia, serif; font-style: italic; }
@@ -1620,9 +1647,8 @@ export default function ResearchPage() {
         .rp-suggested-chip:disabled { opacity: .55; cursor: not-allowed; transform: none; }
         .rp-textarea-wrap { display: flex; align-items: flex-end; gap: 10px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; padding: 10px 12px; transition: border-color 0.2s, box-shadow 0.2s; }
         .rp-textarea-wrap:focus-within { border-color: rgba(196,164,100,0.35); box-shadow: 0 0 0 3px rgba(196,164,100,0.06); }
-        .rp-textarea { flex: 1; background: transparent; border: none; outline: none; resize: none; color: #d4cfc8; font-family: 'DM Sans', sans-serif; font-size: 14px; line-height: 1.6; max-height: 120px; overflow-y: auto; scrollbar-width: none; }
+        .rp-textarea { flex: 1; background: transparent; border: none; outline: none; resize: none; color: #d4cfc8; font-family: 'DM Sans', sans-serif; font-size: 14px; line-height: 1.6; max-height: 120px; overflow-y: auto; }
         .rp-textarea::placeholder { color: #4a4030; }
-        .rp-textarea::-webkit-scrollbar { display: none; }
         .rp-send-btn, .rp-stop-btn { height: 36px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s; }
         .rp-send-btn { width: 36px; background: linear-gradient(135deg, #c4a464, #8a6a30); color: #1a1510; font-size: 16px; box-shadow: 0 2px 10px rgba(196,164,100,0.25); }
         .rp-stop-btn { padding: 0 12px; gap: 7px; background: rgba(224,120,120,0.12); color: #e07878; border: 1px solid rgba(224,120,120,0.22); font-size: 12px; font-weight: 600; }
@@ -1647,9 +1673,7 @@ export default function ResearchPage() {
         .rp-notes-title { font-family: 'Lora', Georgia, serif; font-size: 14px; font-weight: 700; color: #e8e0d0; text-transform: uppercase; letter-spacing: 0.08em; }
         .rp-notes-subtitle { font-size: 11px; color: #5a5040; margin-top: 5px; line-height: 1.45; }
         .rp-notes-count { background: rgba(196,164,100,0.15); color: #c4a464; font-size: 11px; padding: 2px 7px; border-radius: 99px; flex-shrink: 0; }
-        .rp-notes-body { flex: 1; overflow-y: auto; padding: 16px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.06) transparent; }
-        .rp-notes-body::-webkit-scrollbar { width: 3px; }
-        .rp-notes-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+        .rp-notes-body { flex: 1; overflow-y: auto; padding: 16px; }
         .rp-notes-empty { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #5a5040; text-align: center; padding: 28px 20px; font-size: 13px; font-family: 'Lora', Georgia, serif; font-style: italic; border: 1px dashed rgba(255,255,255,0.08); border-radius: 14px; background: rgba(255,255,255,0.02); }
         .rp-notes-empty strong { color: #8a8070; font-style: normal; }
         .rp-note-card { position: relative; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px 38px 14px 14px; margin-bottom: 10px; transition: border-color 0.2s, background 0.2s, box-shadow 0.2s; cursor: default; }
@@ -1666,7 +1690,7 @@ export default function ResearchPage() {
         .rp-note-edit-btn:hover { color: #c4a464; border-color: rgba(196,164,100,0.28); background: rgba(196,164,100,0.08); }
         .rp-note-edit { display: flex; flex-direction: column; gap: 10px; }
         .rp-note-edit input, .rp-note-edit textarea { width: 100%; border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; background: rgba(15,13,10,0.45); color: #d4cfc8; padding: 9px 10px; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; }
-        .rp-note-edit textarea { resize: vertical; line-height: 1.55; }
+        .rp-note-edit textarea { resize: vertical; line-height: 1.55; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.06) transparent; }
         .rp-note-edit input:focus, .rp-note-edit textarea:focus { border-color: rgba(196,164,100,0.35); box-shadow: 0 0 0 3px rgba(196,164,100,0.06); }
         .rp-note-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
         .rp-note-cancel, .rp-note-save { border: none; border-radius: 8px; padding: 7px 11px; font-size: 12px; cursor: pointer; }
@@ -1692,7 +1716,10 @@ export default function ResearchPage() {
         .rp-note-modal-meta span { border: 1px solid rgba(255,255,255,.07); border-radius: 99px; padding: 3px 8px; background: rgba(255,255,255,.035); }
         .rp-note-modal-title-input, .rp-note-modal-edit textarea { width: 100%; border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; background: rgba(15,13,10,0.45); color: #d4cfc8; padding: 10px 12px; font-family: 'DM Sans', sans-serif; outline: none; }
         .rp-note-modal-title-input { font-family: 'Lora', Georgia, serif; font-size: 18px; }
-        .rp-note-modal-edit textarea { resize: vertical; line-height: 1.65; font-size: 13px; }
+        .rp-note-modal-edit textarea { resize: vertical; line-height: 1.65; font-size: 13px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.06) transparent; }
+        .rp-note-modal-edit textarea::-webkit-scrollbar, .rp-note-edit textarea::-webkit-scrollbar, .rp-quiz-input.textarea::-webkit-scrollbar { width: 3px; height: 3px; }
+        .rp-note-modal-edit textarea::-webkit-scrollbar-track, .rp-note-edit textarea::-webkit-scrollbar-track, .rp-quiz-input.textarea::-webkit-scrollbar-track { background: transparent; }
+        .rp-note-modal-edit textarea::-webkit-scrollbar-thumb, .rp-note-edit textarea::-webkit-scrollbar-thumb, .rp-quiz-input.textarea::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 999px; }
         .rp-note-modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
         .rp-citation-detail { margin-bottom: 14px; border: 1px solid rgba(196,164,100,0.2); background: rgba(196,164,100,0.06); border-radius: 12px; padding: 12px; }
         .rp-citation-detail-head { display: flex; align-items: center; justify-content: space-between; color: #c4a464; font-size: 12px; font-weight: 700; margin-bottom: 7px; }
@@ -1723,7 +1750,7 @@ export default function ResearchPage() {
         .rp-quiz-choice.correct { border-color: rgba(80,180,120,0.42); background: rgba(80,180,120,0.11); }
         .rp-quiz-choice.wrong { border-color: rgba(224,120,120,0.42); background: rgba(224,120,120,0.10); }
         .rp-quiz-input { width: 100%; border: 1px solid rgba(255,255,255,0.09); border-radius: 12px; background: rgba(15,13,10,0.55); color: #d4cfc8; padding: 11px 12px; font-family: 'DM Sans', sans-serif; font-size: 14px; outline: none; }
-        .rp-quiz-input.textarea { resize: vertical; line-height: 1.6; }
+        .rp-quiz-input.textarea { resize: vertical; line-height: 1.6; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.06) transparent; }
         .rp-quiz-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
         .rp-quiz-feedback { margin-top: 14px; border: 1px solid rgba(196,164,100,0.16); background: rgba(196,164,100,0.06); border-radius: 13px; padding: 12px; color: #b8ad9c; font-size: 13px; line-height: 1.6; }
         .rp-quiz-feedback strong.ok { color: #78c878; }
@@ -1762,7 +1789,7 @@ export default function ResearchPage() {
             onQuizTypeChange={setQuizType}
           />
           <div className="rp-chat-col">
-            <div className="rp-messages">
+            <div className="rp-messages rp-app-scrollbar">
               {selectedDocumentIds.length > 0 && (
                 <div className="rp-context-banner">
                   Đây là nghiên cứu từ: {selectedDocuments.length > 0 ? selectedDocuments.map((doc) => doc.filename).join(', ') : `${selectedDocumentIds.length} tài liệu đã chọn`}
@@ -1797,7 +1824,6 @@ export default function ResearchPage() {
                     regenerating={regeneratingIndex === i}
                     onCopy={handleCopy}
                     onRegenerate={handleRegenerate}
-                    onCitationClick={handleCitationClick}
                     onSaveNote={handleSaveNote}
                     saved={savedMessageIds.has(msg.id)}
                     saving={savingNoteMessageId === msg.id}
@@ -1814,7 +1840,6 @@ export default function ResearchPage() {
                         content={streamingAnswer}
                         citations={streamingCitations}
                         warning={hasWarningInContent(streamingAnswer) ? null : streamingWarning}
-                        onCitationClick={handleCitationClick}
                       />
                       <span style={{ opacity: 0.5 }}>▌</span>
                     </div>
@@ -1851,7 +1876,7 @@ export default function ResearchPage() {
               <div className="rp-textarea-wrap">
                 <textarea
                   ref={textareaRef}
-                  className="rp-textarea"
+                  className="rp-textarea rp-app-scrollbar"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
