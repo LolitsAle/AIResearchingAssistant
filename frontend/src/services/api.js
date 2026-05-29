@@ -237,6 +237,38 @@ export const api = {
       axiosInstance.post(`/api/research-sessions/${sessionId}/tests/generate`, payload, { headers: authHeader(token) })
     ),
 
+
+  // ── SYSTEM LIBRARY ───────────────────────────────────────────────────────
+  listSystemLibraryDocuments: (params, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/system-library/documents", { params, headers: authHeader(token) })
+    ),
+
+  searchSystemLibrary: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/system-library/search", payload, { headers: authHeader(token) })
+    ),
+
+  getSystemLibraryBookmarks: (token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/system-library/bookmarks", { headers: authHeader(token) })
+    ),
+
+  bookmarkSystemDocument: (documentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/system-library/documents/${documentId}/bookmark`, {}, { headers: authHeader(token) })
+    ),
+
+  unbookmarkSystemDocument: (documentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/system-library/documents/${documentId}/bookmark`, { headers: authHeader(token) })
+    ),
+
+  createSystemLibraryChatSession: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/system-library/chat-session", payload, { headers: authHeader(token) })
+    ),
+
   // ── CHAT ─────────────────────────────────────────────────────────────────
   sendResearchQuery: ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, options = {}) =>
     unwrapRequest(() =>
