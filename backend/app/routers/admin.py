@@ -37,6 +37,7 @@ async def import_system_document(
         title=title,
         category=category,
         tags=tags,
+        mime_type=file.content_type,
     )
     return {"success": True, "data": {"document": document}}
 
