@@ -57,7 +57,7 @@ def _normalize_note(row: dict) -> dict:
         "content": row.get("content") or "",
         "citations": citations,
         "source_message_id": row.get("source_message_id"),
-        "note_type": row.get("note_type") or ("flashcards" if isinstance(row.get("metadata"), dict) and row.get("metadata", {}).get("flashcards") else "note"),
+        "note_type": row.get("note_type") or ("flashcards" if isinstance(row.get("metadata"), dict) and row.get("metadata", {}).get("flashcards") else "text"),
         "metadata": row.get("metadata") or {},
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -200,7 +200,7 @@ async def create_workspace_note(
         "content": body.content.strip(),
         "citations": body.citations,
         "source_message_id": body.source_message_id,
-        "note_type": body.note_type or "note",
+        "note_type": body.note_type or "text",
         "metadata": body.metadata or {},
         "updated_at": now,
     }
