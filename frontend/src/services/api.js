@@ -204,6 +204,23 @@ export const api = {
       axiosInstance.delete(`/api/research-sessions/${sessionId}/messages`, { headers: authHeader(token) })
     ),
 
+  exportResearchSessionDocx: async (sessionId, token) => {
+    try {
+      const response = await axiosInstance.get(`/api/research-sessions/${sessionId}/export.docx`, {
+        headers: authHeader(token),
+        responseType: "blob",
+      });
+      return response;
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
+
+  generateFlashcards: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/research-sessions/${sessionId}/flashcards/generate`, payload, { headers: authHeader(token) })
+    ),
+
   // ── CHAT ─────────────────────────────────────────────────────────────────
   sendResearchQuery: ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, options = {}) =>
     unwrapRequest(() =>
