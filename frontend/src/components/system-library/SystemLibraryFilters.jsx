@@ -8,10 +8,6 @@ const FILTERS = {
     { value: 'month', label: 'Tháng này' },
     { value: 'year', label: 'Năm nay' },
   ],
-  vector_status: [
-    { value: 'ready', label: 'Sẵn sàng cho AI' },
-    { value: 'processing', label: 'Đang xử lý' },
-  ],
 };
 
 function FilterGroup({ title, options, value, onToggle }) {
@@ -57,7 +53,6 @@ export default function SystemLibraryFilters({ filters, selectedTags, onToggleFi
       <FilterGroup title="Danh mục" options={FILTERS.categories} value={filters.categories} onToggle={(value) => onToggleFilter('categories', value)} />
       <FilterGroup title="Định dạng" options={FILTERS.file_types} value={filters.file_types} onToggle={(value) => onToggleFilter('file_types', value)} />
       <FilterGroup title="Cập nhật" options={FILTERS.updated_ranges} value={filters.updated_ranges} onToggle={(value) => onToggleFilter('updated_ranges', value)} />
-      <FilterGroup title="Vector status" options={FILTERS.vector_status} value={filters.vector_status} onToggle={(value) => onToggleFilter('vector_status', value)} />
     </aside>
   );
 }

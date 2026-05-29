@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
+import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -20,7 +24,7 @@ from app.services.llm import generate_system_document_metadata
 logger = logging.getLogger(__name__)
 
 SYSTEM_DOCUMENT_COLUMNS = (
-    "id, title, filename, file_type, storage_path, download_url, category, tags, "
+    "id, title, filename, file_type, storage_path, download_url, file_size, mime_type, category, tags, "
     "summary, page_count, word_count, is_vector_ready, created_by, created_at, updated_at"
 )
 
@@ -77,6 +81,10 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
         "file_type": row.get("file_type") or "FILE",
         "storage_path": row.get("storage_path"),
         "download_url": row.get("download_url"),
+        "file_size": row.get("file_size"),
+        "mime_type": row.get("mime_type"),
+        "can_download": bool(row.get("storage_path") or row.get("download_url")),
+        "description": row.get("description") or summary,
         "category": category,
         "subject_area": category,
         "tags": tags,
@@ -109,6 +117,85 @@ def _format_system_file_type(file_type: str) -> str:
     if normalized in {"txt", "md"}:
         return normalized.upper()
     return normalized.upper() or "FILE"
+
+
+def _safe_filename(filename: str) -> str:
+    value = (filename or "system-document").strip().replace("\x00", "")
+    return value or "system-document"
+
+
+def _ascii_download_filename(filename: str) -> str:
+    raw = _safe_filename(filename)
+    normalized = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized).strip("-._")
+    return cleaned or "system-document"
+
+
+def content_disposition_for_filename(filename: str) -> str:
+    original = _safe_filename(filename)
+    return f"attachment; filename=\"{_ascii_download_filename(original)}\"; filename*=UTF-8''{quote(original, safe='')}"
+
+
+def _storage_object_path(document_id: str, filename: str) -> str:
+    safe_name = re.sub(r"[/\\]+", "-", _safe_filename(filename)).strip(".-") or "system-document"
+    return f"system-library/{document_id}/{safe_name}"
+
+
+def _guess_mime_type(filename: str, supplied_mime_type: str | None = None) -> str:
+    if supplied_mime_type and supplied_mime_type != "application/octet-stream":
+        return supplied_mime_type
+    return mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+
+def _upload_original_file_to_storage(path: str, file_contents: bytes, mime_type: str) -> None:
+    try:
+        supabase.storage.from_(settings.SYSTEM_LIBRARY_STORAGE_BUCKET).upload(
+            path,
+            file_contents,
+            {"content-type": mime_type, "upsert": "false"},
+        )
+    except Exception as exc:
+        logger.exception("Upload original system document to storage failed")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "STORAGE_UPLOAD_FAILED", "message": "Không thể lưu file gốc để tải xuống."},
+        ) from exc
+
+
+def get_system_document_download(document_id: str) -> dict:
+    try:
+        resp = (
+            supabase.table("system_documents")
+            .select("id, filename, storage_path, download_url, file_size, mime_type")
+            .eq("id", document_id)
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Lookup system document download metadata failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải tài liệu."}) from exc
+
+    row, error = _supabase_response_data(resp)
+    if error or not row:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu hệ thống."})
+
+    filename = row.get("filename") or "system-document"
+    storage_path = row.get("storage_path")
+    download_url = row.get("download_url")
+    mime_type = row.get("mime_type") or _guess_mime_type(filename)
+
+    if storage_path:
+        try:
+            contents = supabase.storage.from_(settings.SYSTEM_LIBRARY_STORAGE_BUCKET).download(storage_path)
+        except Exception as exc:
+            logger.exception("Download original system document from storage failed")
+            raise HTTPException(status_code=404, detail={"code": "FILE_NOT_FOUND", "message": "Không tìm thấy file để tải xuống."}) from exc
+        return {"type": "bytes", "content": contents, "filename": filename, "mime_type": mime_type}
+
+    if download_url:
+        return {"type": "redirect", "url": download_url}
+
+    raise HTTPException(status_code=404, detail={"code": "FILE_NOT_FOUND", "message": "Không tìm thấy file để tải xuống."})
 
 
 def _parse_tags(raw_tags: str | list[str] | None) -> list[str]:
@@ -161,6 +248,7 @@ async def import_system_document_from_upload(
     title: str | None = None,
     category: str | None = None,
     tags: str | list[str] | None = None,
+    mime_type: str | None = None,
 ) -> dict:
     """Parse, chunk, embed, auto-catalog, and persist an admin-uploaded System Library document."""
     max_size_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
@@ -185,6 +273,7 @@ async def import_system_document_from_upload(
         raise HTTPException(status_code=400, detail={"code": "PARSE_FAILED", "message": "Không tạo được chunk nội dung từ file này"})
 
     metadata = await _auto_metadata(pages, chunks, category, tags)
+    resolved_mime_type = _guess_mime_type(filename, mime_type)
     document_payload = {
         "title": (title or filename).strip(),
         "filename": filename,
@@ -194,6 +283,8 @@ async def import_system_document_from_upload(
         "summary": metadata["summary"],
         "page_count": len(pages),
         "word_count": _estimate_word_count(pages),
+        "file_size": len(file_contents),
+        "mime_type": resolved_mime_type,
         "created_by": _valid_uuid_or_none(created_by),
         "is_vector_ready": False,
     }
@@ -208,6 +299,31 @@ async def import_system_document_from_upload(
         raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể tạo metadata tài liệu hệ thống"})
 
     document_id = str(rows[0]["id"])
+    storage_path = _storage_object_path(document_id, filename)
+    try:
+        _upload_original_file_to_storage(storage_path, file_contents, resolved_mime_type)
+    except HTTPException:
+        try:
+            supabase.table("system_documents").delete().eq("id", document_id).execute()
+        except Exception:
+            logger.warning("Could not rollback system document %s after storage upload failure", document_id)
+        raise
+
+    try:
+        storage_resp = supabase.table("system_documents").update({"storage_path": storage_path}).eq("id", document_id).execute()
+        storage_rows, storage_error = _supabase_response_data(storage_resp)
+        if storage_error:
+            raise RuntimeError(storage_error)
+        if storage_rows:
+            rows[0] = storage_rows[0]
+    except Exception as exc:
+        logger.exception("Update system document storage metadata failed")
+        try:
+            supabase.table("system_documents").delete().eq("id", document_id).execute()
+        except Exception:
+            logger.warning("Could not rollback system document %s after storage metadata failure", document_id)
+        raise HTTPException(status_code=500, detail={"code": "DB_UPDATE_FAILED", "message": "Không thể lưu metadata file tải xuống."}) from exc
+
     try:
         texts = [chunk["content"] for chunk in chunks]
         embeddings = await embed_chunks(texts)

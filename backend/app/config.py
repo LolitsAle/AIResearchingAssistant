@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # System Library admin upload account. Override these in production.
     SYSTEM_LIBRARY_ADMIN_EMAIL: str = "admin"
     SYSTEM_LIBRARY_ADMIN_PASSWORD: str = "admin"
+    SYSTEM_LIBRARY_STORAGE_BUCKET: str = "system-documents"
 
     # Limits
     MAX_UPLOAD_MB: int = 50

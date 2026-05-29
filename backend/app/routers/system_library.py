@@ -3,10 +3,17 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
-from app.services.system_library_service import add_bookmark, list_or_search_documents, remove_bookmark
+from app.services.system_library_service import (
+    add_bookmark,
+    content_disposition_for_filename,
+    get_system_document_download,
+    list_or_search_documents,
+    remove_bookmark,
+)
 
 router = APIRouter(tags=["system-library"])
 
@@ -46,6 +53,20 @@ async def list_documents(
 async def search_documents(body: SystemLibrarySearchRequest, user: dict = Depends(get_current_user)):
     data = await list_or_search_documents(user, body.query, body.filters.model_dump())
     return {"success": True, "data": data}
+
+
+@router.get("/documents/{document_id}/download")
+async def download_document(document_id: str, user: dict = Depends(get_current_user)):
+    # Authenticated users may download available System Library originals; service role stays server-side.
+    _ = user
+    download = get_system_document_download(document_id)
+    if download.get("type") == "redirect":
+        return RedirectResponse(download["url"])
+    return Response(
+        content=download["content"],
+        media_type=download.get("mime_type") or "application/octet-stream",
+        headers={"Content-Disposition": content_disposition_for_filename(download.get("filename") or "system-document")},
+    )
 
 
 @router.get("/bookmarks", response_model=dict)

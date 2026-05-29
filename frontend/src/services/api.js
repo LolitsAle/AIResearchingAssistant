@@ -44,6 +44,29 @@ async function unwrapRequest(requestFn) {
   }
 }
 
+function parseContentDispositionFilename(header = "") {
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try { return decodeURIComponent(utf8Match[1]); } catch {}
+  }
+  const asciiMatch = header.match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1] || "system-document";
+}
+
+async function triggerBlobDownload(response, fallbackFilename = "system-document") {
+  const blob = new Blob([response.data], { type: response.headers?.["content-type"] || "application/octet-stream" });
+  const filename = parseContentDispositionFilename(response.headers?.["content-disposition"] || "") || fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return filename;
+}
+
 const authHeader = (token) => ({ Authorization: `Bearer ${token}` });
 
 async function readSseStream(response, callbacks = {}) {
@@ -158,9 +181,14 @@ export const api = {
     ),
 
   // ── NOTES ────────────────────────────────────────────────────────────────
-  getWorkspaceNotes: (workspaceId, token) =>
+  getWorkspaceNotes: (workspaceId, token, params = {}) =>
     unwrapRequest(() =>
-      axiosInstance.get(`/api/workspaces/${workspaceId}/notes`, { headers: authHeader(token) })
+      axiosInstance.get(`/api/workspaces/${workspaceId}/notes`, { params, headers: authHeader(token) })
+    ),
+
+  getResearchSessionNotes: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/research-sessions/${sessionId}/notes`, { headers: authHeader(token) })
     ),
 
   createWorkspaceNote: (workspaceId, payload, token) =>
@@ -266,6 +294,18 @@ export const api = {
     unwrapRequest(() =>
       axiosInstance.delete(`/api/system-library/documents/${documentId}/bookmark`, { headers: authHeader(token) })
     ),
+
+  downloadSystemDocument: async (documentId, token, fallbackFilename = "system-document") => {
+    try {
+      const response = await axiosInstance.get(`/api/system-library/documents/${documentId}/download`, {
+        headers: authHeader(token),
+        responseType: "blob",
+      });
+      return triggerBlobDownload(response, fallbackFilename);
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
 
   importSystemDocument: (payload, token, onProgress) => {
     const formData = new FormData();

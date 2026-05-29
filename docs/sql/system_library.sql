@@ -23,6 +23,8 @@ create table if not exists public.system_documents (
   file_type text,
   storage_path text,
   download_url text,
+  file_size bigint,
+  mime_type text,
   category text,
   tags text[] not null default '{}',
   summary text,
@@ -37,6 +39,8 @@ create table if not exists public.system_documents (
 alter table public.system_documents
   add column if not exists storage_path text,
   add column if not exists download_url text,
+  add column if not exists file_size bigint,
+  add column if not exists mime_type text,
   add column if not exists category text,
   add column if not exists summary text,
   add column if not exists created_by uuid;
@@ -74,6 +78,12 @@ create index if not exists idx_system_document_bookmarks_user on public.system_d
 create index if not exists idx_system_document_chunks_document on public.system_document_chunks(document_id);
 create index if not exists idx_system_document_chunks_embedding on public.system_document_chunks using ivfflat (embedding vector_cosine_ops) with (lists = 100);
 create index if not exists idx_documents_source on public.documents(source_type, source_id);
+
+-- Create this private bucket in Supabase Storage if it does not exist already.
+-- The backend uses SUPABASE_SERVICE_KEY to upload/download originals and never exposes it.
+insert into storage.buckets (id, name, public)
+values ('system-documents', 'system-documents', false)
+on conflict (id) do nothing;
 
 alter table public.system_documents enable row level security;
 alter table public.system_document_bookmarks enable row level security;
