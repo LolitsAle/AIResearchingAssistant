@@ -44,8 +44,14 @@ const STYLES = `
   .ca-table th, .ca-table td { padding: 13px 14px; border-bottom:1px solid rgba(255,255,255,.07); text-align:left; vertical-align:top; color:#d8cfc0; line-height:1.55; }
   .ca-table th { position:sticky; top:0; background:#1a160f; color:#f2d48b; z-index:1; }
   .ca-confidence { white-space:nowrap; color:#9fd0aa; font-weight:800; }
-  .ca-doc-panel { max-height: 410px; overflow:auto; }
+  .ca-doc-panel { min-height: 72vh; height: min(82vh, 920px); overflow:hidden; display:flex; flex-direction:column; gap:12px; padding:0; }
+  .ca-doc-panel__header { padding:16px 16px 0; }
   .ca-doc-panel h3 { margin: 0 0 8px; color:#f3ebdc; }
+  .ca-doc-panel__body { flex:1; min-height:0; overflow:auto; padding:0 16px 16px; }
+  .ca-pdf-viewer { flex:1; min-height:0; display:flex; flex-direction:column; border-top:1px solid rgba(255,255,255,.07); background:#111; }
+  .ca-pdf-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 12px; background:rgba(255,255,255,.045); border-bottom:1px solid rgba(255,255,255,.07); }
+  .ca-pdf-frame { flex:1; width:100%; min-height:620px; border:0; background:#1d1d1d; }
+  .ca-pdf-state { flex:1; display:grid; place-items:center; min-height:360px; padding:18px; text-align:center; }
   .ca-snippet { margin-top: 12px; padding: 12px; border-radius:15px; background:rgba(255,255,255,.045); color:#bfb4a3; line-height:1.6; font-size:13px; }
   .ca-chat-log { display:grid; gap:10px; max-height: 360px; overflow:auto; padding-right:4px; }
   .ca-message { border-radius:16px; padding:12px 14px; line-height:1.6; white-space:pre-wrap; }
@@ -66,6 +72,18 @@ const STYLES = `
 function sourceLabel(doc) {
   if (!doc) return 'Chưa chọn';
   return doc.source_type === 'system_library' ? 'Thư viện Hệ thống' : 'File upload tạm';
+}
+
+function isPdfDocument(doc) {
+  const fileType = String(doc?.file_type || '').toLowerCase();
+  const filename = String(doc?.filename || doc?.title || '').toLowerCase();
+  return fileType.includes('pdf') || filename.endsWith('.pdf');
+}
+
+function revokePreviewUrl(doc) {
+  if (doc?.preview_url && doc?.preview_url_owner === 'cross-analysis') {
+    URL.revokeObjectURL(doc.preview_url);
+  }
 }
 
 function toDocumentRef(doc) {
@@ -197,6 +215,102 @@ function QuickResultPanel({ quickResult }) {
   );
 }
 
+function PdfDocumentPanel({ label, document }) {
+  const { token } = useAuth();
+  const [viewerUrl, setViewerUrl] = useState(document?.preview_url || '');
+  const [viewerFilename, setViewerFilename] = useState(document?.filename || document?.title || 'document.pdf');
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerError, setViewerError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    let createdUrl = '';
+
+    setViewerError('');
+    setViewerFilename(document?.filename || document?.title || 'document.pdf');
+
+    if (!document || !isPdfDocument(document)) {
+      setViewerUrl('');
+      return () => {};
+    }
+
+    if (document.preview_url) {
+      setViewerUrl(document.preview_url);
+      return () => {};
+    }
+
+    if (document.source_type !== 'system_library') {
+      setViewerUrl('');
+      setViewerError('Không tìm thấy blob PDF để hiển thị. Vui lòng upload lại file PDF.');
+      return () => {};
+    }
+
+    setViewerLoading(true);
+    api.fetchSystemDocumentBlob(document.id, token, document.filename || document.title || 'system-document.pdf')
+      .then(({ blob, filename, contentType }) => {
+        if (cancelled) return;
+        if (!String(contentType || blob.type || '').includes('pdf')) {
+          setViewerUrl('');
+          setViewerError('Tài liệu tải về không phải PDF nên không thể mở bằng PDF viewer.');
+          return;
+        }
+        createdUrl = URL.createObjectURL(blob);
+        setViewerFilename(filename || document.filename || document.title || 'document.pdf');
+        setViewerUrl(createdUrl);
+      })
+      .catch((err) => {
+        if (!cancelled) setViewerError(err.message || 'Không thể tải PDF từ Thư viện Hệ thống.');
+      })
+      .finally(() => {
+        if (!cancelled) setViewerLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [document, token]);
+
+  const viewerSrc = viewerUrl ? `${viewerUrl}#toolbar=1&navpanes=1&scrollbar=1&view=FitH` : '';
+
+  return (
+    <article className="ca-doc-panel">
+      <div className="ca-doc-panel__header">
+        <h3>Tài liệu {label}: {document?.title || 'Chưa chọn'}</h3>
+        <p className="ca-muted">{sourceLabel(document)} · {document?.filename || '—'}</p>
+      </div>
+
+      {document && isPdfDocument(document) ? (
+        <div className="ca-pdf-viewer">
+          <div className="ca-pdf-toolbar">
+            <span className="ca-muted">PDF viewer đầy đủ · {viewerFilename}</span>
+            <div className="ca-actions" style={{ marginTop: 0 }}>
+              {viewerUrl && <a className="ca-btn" href={viewerUrl} target="_blank" rel="noreferrer"><FileText size={15} /> Mở tab mới</a>}
+              {viewerUrl && <a className="ca-btn" href={viewerUrl} download={viewerFilename}><Download size={15} /> Tải PDF</a>}
+            </div>
+          </div>
+          {viewerLoading ? (
+            <div className="ca-pdf-state"><p className="ca-muted"><Loader2 size={18} /> Đang tải PDF viewer...</p></div>
+          ) : viewerError ? (
+            <div className="ca-pdf-state"><div className="ca-warning"><AlertTriangle size={17} /> {viewerError}</div></div>
+          ) : viewerSrc ? (
+            <iframe className="ca-pdf-frame" src={viewerSrc} title={`PDF viewer tài liệu ${label}`} />
+          ) : (
+            <div className="ca-pdf-state"><p className="ca-muted">Chưa có PDF để hiển thị.</p></div>
+          )}
+        </div>
+      ) : (
+        <div className="ca-doc-panel__body">
+          {document?.summary && <div className="ca-snippet"><strong>Tóm tắt:</strong><br />{document.summary}</div>}
+          {(document?.snippets || []).map((snippet, index) => <div className="ca-snippet" key={index}><strong>{snippet.section || 'Trích đoạn'} · Trang {snippet.page_number || '?'}</strong><br />{snippet.content}</div>)}
+          {!document && <p className="ca-muted">Chọn một tài liệu PDF để xem bằng PDF viewer hoặc tài liệu khác để xem snippets.</p>}
+          {document && !isPdfDocument(document) && <p className="ca-muted">Tài liệu này không phải PDF; hệ thống hiển thị snippets đã trích xuất thay cho PDF viewer.</p>}
+        </div>
+      )}
+    </article>
+  );
+}
+
 export default function CrossAnalysisPage() {
   const { token } = useAuth();
   const [documentA, setDocumentA] = useState(null);
@@ -209,6 +323,24 @@ export default function CrossAnalysisPage() {
   const [activeSlot, setActiveSlot] = useState(null);
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
+  const previewUrlsRef = useRef(new Set());
+
+  const setDocumentForSlot = (slot, nextDocument) => {
+    const setter = slot === 'A' ? setDocumentA : setDocumentB;
+    setter((current) => {
+      if (current?.preview_url) previewUrlsRef.current.delete(current.preview_url);
+      revokePreviewUrl(current);
+      if (nextDocument?.preview_url && nextDocument?.preview_url_owner === 'cross-analysis') {
+        previewUrlsRef.current.add(nextDocument.preview_url);
+      }
+      return nextDocument;
+    });
+  };
+
+  useEffect(() => () => {
+    previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    previewUrlsRef.current.clear();
+  }, []);
 
   const tableRows = comparisonResult?.comparison_table || [];
   const canAnalyze = documentA && documentB && !sameDocument(documentA, documentB);
@@ -218,10 +350,18 @@ export default function CrossAnalysisPage() {
   const uploadForSlot = async (slot, file) => {
     setLoading(`upload-${slot}`);
     setError('');
+    let previewUrl = '';
     try {
+      previewUrl = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') ? URL.createObjectURL(file) : '';
       const doc = await api.uploadCrossAnalysisDocument(file, token);
-      if (slot === 'A') setDocumentA(doc); else setDocumentB(doc);
+      setDocumentForSlot(slot, {
+        ...doc,
+        mime_type: file.type,
+        preview_url: previewUrl,
+        preview_url_owner: previewUrl ? 'cross-analysis' : undefined,
+      });
     } catch (err) {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
       setError(err.message || 'Upload thất bại.');
     } finally {
       setLoading('');
@@ -287,8 +427,8 @@ export default function CrossAnalysisPage() {
       <section className="ca-section">
         <h2 className="ca-section-title"><Columns size={20} /> 1. Chọn hai tài liệu</h2>
         <div className="ca-picker-grid">
-          <DocumentSlot label="Tài liệu A" document={documentA} uploading={loading === 'upload-A'} onUpload={(file) => uploadForSlot('A', file)} onOpenLibrary={() => setActiveSlot('A')} onClear={() => setDocumentA(null)} />
-          <DocumentSlot label="Tài liệu B" document={documentB} uploading={loading === 'upload-B'} onUpload={(file) => uploadForSlot('B', file)} onOpenLibrary={() => setActiveSlot('B')} onClear={() => setDocumentB(null)} />
+          <DocumentSlot label="Tài liệu A" document={documentA} uploading={loading === 'upload-A'} onUpload={(file) => uploadForSlot('A', file)} onOpenLibrary={() => setActiveSlot('A')} onClear={() => setDocumentForSlot('A', null)} />
+          <DocumentSlot label="Tài liệu B" document={documentB} uploading={loading === 'upload-B'} onUpload={(file) => uploadForSlot('B', file)} onOpenLibrary={() => setActiveSlot('B')} onClear={() => setDocumentForSlot('B', null)} />
         </div>
         <div className="ca-criteria">
           {CRITERIA.map((criterion) => (
@@ -326,14 +466,8 @@ export default function CrossAnalysisPage() {
       <section className="ca-section">
         <h2 className="ca-section-title"><Columns size={20} /> 3. Split-screen hai tài liệu</h2>
         <div className="ca-split">
-          {[['A', documentA], ['B', documentB]].map(([label, doc]) => (
-            <article key={label} className="ca-doc-panel">
-              <h3>Tài liệu {label}: {doc?.title || 'Chưa chọn'}</h3>
-              <p className="ca-muted">{sourceLabel(doc)} · {doc?.filename || '—'}</p>
-              {doc?.summary && <div className="ca-snippet"><strong>Tóm tắt:</strong><br />{doc.summary}</div>}
-              {(doc?.snippets || []).map((snippet, index) => <div className="ca-snippet" key={index}><strong>{snippet.section || 'Trích đoạn'} · Trang {snippet.page_number || '?'}</strong><br />{snippet.content}</div>)}
-            </article>
-          ))}
+          <PdfDocumentPanel label="A" document={documentA} />
+          <PdfDocumentPanel label="B" document={documentB} />
         </div>
       </section>
 
@@ -348,7 +482,7 @@ export default function CrossAnalysisPage() {
         </form>
       </section>
 
-      <SystemDocumentPickerModal open={Boolean(activeSlot)} onClose={() => setActiveSlot(null)} onSelect={(doc) => activeSlot === 'A' ? setDocumentA(doc) : setDocumentB(doc)} />
+      <SystemDocumentPickerModal open={Boolean(activeSlot)} onClose={() => setActiveSlot(null)} onSelect={(doc) => setDocumentForSlot(activeSlot, doc)} />
     </div>
   );
 }

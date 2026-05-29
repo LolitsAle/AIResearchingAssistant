@@ -53,6 +53,12 @@ function parseContentDispositionFilename(header = "") {
   return asciiMatch?.[1] || "";
 }
 
+async function getBlobResponse(response, fallbackFilename = "document") {
+  const blob = new Blob([response.data], { type: response.headers?.["content-type"] || "application/octet-stream" });
+  const filename = parseContentDispositionFilename(response.headers?.["content-disposition"] || "") || fallbackFilename;
+  return { blob, filename, contentType: blob.type };
+}
+
 async function triggerBlobDownload(response, fallbackFilename = "system-document") {
   const blob = new Blob([response.data], { type: response.headers?.["content-type"] || "application/octet-stream" });
   const filename = parseContentDispositionFilename(response.headers?.["content-disposition"] || "") || fallbackFilename;
@@ -294,6 +300,18 @@ export const api = {
     unwrapRequest(() =>
       axiosInstance.delete(`/api/system-library/documents/${documentId}/bookmark`, { headers: authHeader(token) })
     ),
+
+  fetchSystemDocumentBlob: async (documentId, token, fallbackFilename = "system-document") => {
+    try {
+      const response = await axiosInstance.get(`/api/system-library/documents/${documentId}/download`, {
+        headers: authHeader(token),
+        responseType: "blob",
+      });
+      return getBlobResponse(response, fallbackFilename);
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
 
   downloadSystemDocument: async (documentId, token, fallbackFilename = "system-document") => {
     try {
