@@ -251,3 +251,122 @@ def _get_owned_session(session_id: str, user_id: str) -> dict:
     if not rows:
         raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy phiên nghiên cứu"})
     return _normalize_session(rows[0])
+
+
+class GenerateFlashcardsRequest(BaseModel):
+    selected_document_ids: List[str] = Field(default_factory=list, max_length=50)
+    count: int = Field(default=5, ge=1, le=20)
+
+
+def _safe_export_filename(title: str | None) -> str:
+    raw = (title or f"research-chat-{datetime.now(timezone.utc).date().isoformat()}").strip()
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", " ") else "-" for ch in raw).strip().replace(" ", "-")
+    return f"research-chat-{safe[:80] or 'session'}.docx"
+
+
+@router.get("/research-sessions/{session_id}/export.docx")
+async def export_research_session_docx(session_id: str, user: dict = Depends(get_current_user)):
+    from io import BytesIO
+
+    from docx import Document
+    from fastapi.responses import StreamingResponse
+
+    user_id = _get_user_id(user)
+    session = _get_owned_session(session_id, user_id)
+    try:
+        resp = (
+            supabase.table("research_session_messages")
+            .select("id, role, content, citations, created_at")
+            .eq("research_session_id", session_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Export research session messages failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tạo file chia sẻ."}) from exc
+    rows, error = _supabase_response_data(resp)
+    if error:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tạo file chia sẻ."})
+
+    doc = Document()
+    doc.add_heading(session.get("title") or "Lịch sử nghiên cứu", 0)
+    doc.add_paragraph(f"Ngày xuất file: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+
+    for row in rows or []:
+        role = "User" if row.get("role") == "user" else "Assistant"
+        p = doc.add_paragraph()
+        run = p.add_run(role)
+        run.bold = True
+        doc.add_paragraph(row.get("content") or "")
+        citations = row.get("citations") or []
+        if row.get("role") == "assistant" and citations:
+            source_title = doc.add_paragraph("Nguồn tham khảo")
+            source_title.runs[0].bold = True
+            for index, citation in enumerate(citations, start=1):
+                label = citation.get("citation_index") or index
+                title = citation.get("document_title") or citation.get("filename") or "Tài liệu"
+                page_start = citation.get("page_start") or citation.get("page")
+                page_end = citation.get("page_end") or page_start
+                score = citation.get("score")
+                page_text = f", tr. {page_start}-{page_end}" if page_start and page_end and page_end != page_start else (f", tr. {page_start}" if page_start else "")
+                score_text = f", score {score}" if score is not None else ""
+                doc.add_paragraph(f"[{label}] {title}{page_text}{score_text}", style="List Bullet")
+        doc.add_paragraph("")
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    filename = _safe_export_filename(session.get("title"))
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/research-sessions/{session_id}/flashcards/generate", response_model=dict)
+async def generate_research_session_flashcards(
+    session_id: str,
+    body: GenerateFlashcardsRequest,
+    user: dict = Depends(get_current_user),
+):
+    from app.services.groq_service import generate_flashcards_from_context
+
+    user_id = _get_user_id(user)
+    session = _get_owned_session(session_id, user_id)
+    session_doc_ids = [str(doc_id) for doc_id in (session.get("selected_document_ids") or [])]
+    requested_doc_ids = [str(doc_id) for doc_id in (body.selected_document_ids or session_doc_ids)]
+    allowed = set(session_doc_ids)
+    selected = [doc_id for doc_id in requested_doc_ids if doc_id in allowed]
+    if not selected:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_SELECTED_DOCUMENTS", "message": "Chọn tài liệu để tạo flashcards."})
+
+    try:
+        resp = (
+            supabase.table("document_chunks")
+            .select("doc_id, section, content, page_number, chunk_index")
+            .eq("notebook_id", session.get("notebook_id"))
+            .in_("doc_id", selected)
+            .order("chunk_index", desc=False)
+            .limit(30)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Load flashcard context failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải nội dung tài liệu."}) from exc
+    rows, error = _supabase_response_data(resp)
+    if error or not rows:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy nội dung tài liệu để tạo flashcards."})
+
+    context = "\n\n".join(
+        f"[Trang {row.get('page_number') or '?'} - {row.get('section') or 'Unknown'}] {row.get('content') or ''}"
+        for row in rows
+        if row.get("content")
+    )
+    try:
+        flashcards = await generate_flashcards_from_context(context, body.count)
+    except Exception as exc:
+        message = str(exc) or "Thiếu GROQ_API_KEY hoặc không thể tạo flashcards."
+        raise HTTPException(status_code=500, detail={"code": "GROQ_FAILED", "message": message}) from exc
+
+    return {"success": True, "data": {"flashcards": flashcards}}

@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext';
 
 const MAX_UPLOAD_MB = Number(import.meta.env.VITE_MAX_UPLOAD_MB || 50);
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+const SUPPORTED_UPLOAD_EXTENSIONS = new Set(["pdf", "docx", "doc", "txt", "md", "rtf"]);
+const SUPPORTED_UPLOAD_ACCEPT = ".pdf,.docx,.doc,.txt,.md,.rtf";
 
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap');
@@ -569,19 +571,22 @@ export default function NotebookPage() {
 
   const addFiles = (newFiles) => {
     setUploadResult(null); setUploadError('');
-    const pdfs = newFiles.filter(f => f.type === 'application/pdf');
-    const invalid = newFiles.length - pdfs.length;
-    const tooLarge = pdfs.filter(f => f.size > MAX_UPLOAD_BYTES);
-    const validPdfs = pdfs.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    const supported = newFiles.filter((file) => {
+      const extension = (file.name.split('.').pop() || '').toLowerCase();
+      return SUPPORTED_UPLOAD_EXTENSIONS.has(extension);
+    });
+    const invalid = newFiles.length - supported.length;
+    const tooLarge = supported.filter(f => f.size > MAX_UPLOAD_BYTES);
+    const validFiles = supported.filter(f => f.size <= MAX_UPLOAD_BYTES);
     const existingNames = new Set(documents.map((doc) => normalizeFilename(doc.filename)));
     const messages = [];
-    if (invalid > 0) messages.push(`${invalid} file không phải PDF đã bị bỏ qua.`);
+    if (invalid > 0) messages.push(`${invalid} file không được hỗ trợ đã bị bỏ qua. Hỗ trợ PDF, DOCX, TXT, MD.`);
     if (tooLarge.length > 0) messages.push(`${tooLarge.length} file vượt quá ${MAX_UPLOAD_MB}MB đã bị bỏ qua.`);
     if (messages.length > 0) setUploadError(messages.join(' '));
 
     setSelectedFiles(prev => {
       const existing = new Set(prev.map(f => normalizeFilename(f.name)));
-      const added = validPdfs.filter(f => {
+      const added = validFiles.filter(f => {
         const normalized = normalizeFilename(f.name);
         if (existingNames.has(normalized)) {
           messages.push('Tài liệu đã tồn tại trong notebook.');
@@ -613,7 +618,8 @@ export default function NotebookPage() {
         await loadDocumentSummary(readyIds, { generate: true });
       }
       if ((result.failed || []).length > 0) {
-        setUploadError('Upload tài liệu thất bại.');
+        const failedMessages = result.failed.map((item) => item.message || item.error || 'Upload tài liệu thất bại.');
+        setUploadError(Array.from(new Set(failedMessages)).join(' '));
       }
     } catch (err) {
       setUploadError(err.message || 'Upload tài liệu thất bại.');
@@ -781,7 +787,7 @@ export default function NotebookPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf"
+                accept={SUPPORTED_UPLOAD_ACCEPT}
                 multiple
                 style={{ display: 'none' }}
                 onChange={handleFileInput}
@@ -798,9 +804,9 @@ export default function NotebookPage() {
                 <>
                   <div className="nbp-dropzone-icon">📄</div>
                   <p className="nbp-dropzone-text">
-                    <span>Chọn file</span> hoặc kéo thả PDF vào đây
+                    <span>Chọn file</span> hoặc kéo thả tài liệu vào đây
                   </p>
-                  <p className="nbp-dropzone-hint">Hỗ trợ nhiều file · PDF · Tối đa {MAX_UPLOAD_MB}MB/file</p>
+                  <p className="nbp-dropzone-hint">Hỗ trợ nhiều file · PDF, DOCX, TXT, MD · Tối đa {MAX_UPLOAD_MB}MB/file</p>
                 </>
               )}
             </div>
@@ -892,7 +898,7 @@ export default function NotebookPage() {
               <div className="nbp-empty">
                 <div className="nbp-empty-icon">📚</div>
                 <p className="nbp-empty-text">Chưa có tài liệu nào.</p>
-                <p className="nbp-empty-sub">Upload PDF ở trên để bắt đầu.</p>
+                <p className="nbp-empty-sub">Upload PDF, DOCX, TXT hoặc MD ở trên để bắt đầu.</p>
               </div>
             ) : (
               documents.map(doc => (
@@ -909,8 +915,9 @@ export default function NotebookPage() {
                     <p className="nbp-doc-name">{doc.filename}</p>
                     <div className="nbp-doc-tags">
                       {[
-                        `${doc.page_count} trang`,
+                        `${doc.page_count || 1} trang`,
                         `${doc.chunk_count} chunks`,
+                        (doc.file_type || doc.filename?.split('.').pop() || 'file').toUpperCase(),
                         new Date(doc.created_at).toLocaleDateString('vi-VN'),
                       ].map((tag, i) => (
                         <span key={i} className="nbp-doc-tag">{tag}</span>

@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useParams, Link, useLocation } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 
@@ -19,6 +20,7 @@ const QUICK_ACTIONS = [
   { id: "outline", icon: "☷", label: "Tạo dàn ý nghiên cứu", prompt: "Hãy tạo một dàn ý nghiên cứu dựa trên tài liệu đã chọn, gồm các mục lớn, ý phụ và gợi ý triển khai." },
   { id: "similar_diff", icon: "▦", label: "Tìm điểm giống và khác nhau", prompt: "Hãy tìm các điểm giống và khác nhau giữa các tài liệu đã chọn, trình bày trong bảng nếu phù hợp." },
   { id: "next_questions", icon: "✦", label: "Gợi ý câu hỏi tiếp theo", prompt: "Dựa trên các tài liệu đã chọn và cuộc trò chuyện hiện tại, hãy gợi ý các câu hỏi tiếp theo mà người dùng nên hỏi để hiểu sâu hơn nội dung nghiên cứu." },
+  { id: "flashcards", icon: "▣", label: "Flashcard", special: "flashcards" },
 ];
 
 const isAbortError = (err) => err?.name === "AbortError" || err?.code === "ABORT_ERR";
@@ -73,32 +75,43 @@ function CitationButton({ citation, onClick }) {
   );
 }
 
-function AnswerWithCitations({ content, citations = [], onCitationClick }) {
+
+function MarkdownContent({ content = "", citations = [], onCitationClick }) {
   const citationMap = useMemo(
     () => new Map(citations.map((citation) => [String(citation.citation_index), citation])),
     [citations]
   );
-  const parts = content.split(/(\[(?:\d+)\])/g);
-  const hasInlineCitation = /\[(\d+)\]/.test(content);
+  const markdown = useMemo(
+    () => (content || "").replace(/\[(\d+)\]/g, (match, value) => (citationMap.has(String(value)) ? `[${match}](citation:${value})` : match)),
+    [content, citationMap]
+  );
+
+  return (
+    <ReactMarkdown
+      className="rp-markdown"
+      skipHtml
+      components={{
+        a: ({ href, children }) => {
+          if (href?.startsWith("citation:")) {
+            const key = href.replace("citation:", "");
+            const citation = citationMap.get(key);
+            if (citation) return <CitationButton citation={citation} onClick={onCitationClick} />;
+          }
+          return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+        },
+      }}
+    >
+      {markdown}
+    </ReactMarkdown>
+  );
+}
+
+function AnswerWithCitations({ content, citations = [], onCitationClick }) {
+  const hasInlineCitation = /\[(\d+)\]/.test(content || "");
 
   return (
     <>
-      {parts.map((part, index) => {
-        const match = part.match(/^\[(\d+)\]$/);
-        if (!match) return <span key={`${part}-${index}`}>{part}</span>;
-
-        const citation = citationMap.get(match[1]);
-        if (!citation) return <span key={`${part}-${index}`}>{part}</span>;
-
-        return (
-          <CitationButton
-            key={`${part}-${index}`}
-            citation={citation}
-            onClick={onCitationClick}
-          />
-        );
-      })}
-
+      <MarkdownContent content={content || ""} citations={citations} onCitationClick={onCitationClick} />
       {!hasInlineCitation && citations.length > 0 && (
         <span className="rp-citation-footer">
           Nguồn:{" "}
@@ -158,6 +171,94 @@ function CitationDetail({ citation, onClose }) {
         {scoreText && <span>{scoreText}</span>}
       </div>
       {snippet && <p>{snippet}</p>}
+    </div>
+  );
+}
+
+function getFlashcardsFromNote(note) {
+  const fromMetadata = note?.metadata?.flashcards;
+  if (Array.isArray(fromMetadata)) return fromMetadata;
+  try {
+    const parsed = JSON.parse(note?.content || "{}");
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed.flashcards)) return parsed.flashcards;
+  } catch {}
+  return [];
+}
+
+function QuickActionsSidebar({ actions, selectedDocumentIds, loading, onAction }) {
+  return (
+    <aside className="rp-actions-col">
+      <div className="rp-notes-header">
+        <div>
+          <div className="rp-notes-title">Tính năng nhanh</div>
+          <p className="rp-notes-subtitle">Chạy prompt nhanh trên tài liệu đã chọn.</p>
+        </div>
+      </div>
+      {!selectedDocumentIds.length && (
+        <div className="rp-action-helper">Chọn tài liệu để sử dụng tính năng nhanh.</div>
+      )}
+      <div className="rp-actions-list">
+        {actions.map((action) => {
+          const disabled = !selectedDocumentIds.length || (action.requiresTwo && selectedDocumentIds.length < 2) || loading;
+          return (
+            <button
+              key={action.id}
+              type="button"
+              className="rp-action-card"
+              disabled={disabled}
+              title={action.requiresTwo && selectedDocumentIds.length < 2 ? "Cần chọn ít nhất 2 tài liệu để so sánh." : action.label}
+              onClick={() => onAction(action)}
+            >
+              <span className="rp-action-icon">{action.icon}</span>
+              <span>{action.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+function FlashcardModal({ flashcards, title = "Flashcards", onClose, onSave, saving = false }) {
+  const [index, setIndex] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const cards = Array.isArray(flashcards) ? flashcards : [];
+  const card = cards[index] || {};
+
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === "Escape") onClose?.(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!cards.length) return null;
+  const goTo = (next) => { setIndex(next); setFlipped(false); };
+
+  return (
+    <div className="rp-modal-overlay" onClick={onClose}>
+      <div className="rp-flashcard-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="rp-note-modal-head">
+          <div>
+            <div className="rp-note-modal-kicker">Flashcard</div>
+            <h2>{title}</h2>
+          </div>
+          <button type="button" className="rp-note-modal-close" onClick={onClose} aria-label="Đóng flashcards">×</button>
+        </div>
+        <div className={`rp-flashcard ${flipped ? "flipped" : ""}`}>
+          <div className="rp-flashcard-side-label">{flipped ? "Back" : "Front"}</div>
+          <p>{flipped ? card.back : card.front}</p>
+        </div>
+        <div className="rp-flashcard-controls">
+          <button type="button" onClick={() => goTo(Math.max(0, index - 1))} disabled={index === 0}>← Trước</button>
+          <button type="button" onClick={() => setFlipped((value) => !value)}>Lật thẻ</button>
+          <button type="button" onClick={() => goTo(Math.min(cards.length - 1, index + 1))} disabled={index === cards.length - 1}>Tiếp →</button>
+        </div>
+        <div className="rp-flashcard-footer">
+          <span>{index + 1}/{cards.length}</span>
+          {onSave && <button type="button" className="rp-note-save" onClick={onSave} disabled={saving}>{saving ? "Đang lưu..." : "Lưu vào ghi chú"}</button>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -272,7 +373,7 @@ function NotesPanel({
       </div>
 
       {selectedNote && (
-        <div className="rp-note-modal-overlay" onClick={onCloseNote}>
+        <div className="rp-modal-overlay rp-note-modal-overlay" onClick={onCloseNote}>
           <div className="rp-note-modal" onClick={(e) => e.stopPropagation()}>
             <div className="rp-note-modal-head">
               <div>
@@ -314,7 +415,7 @@ function NotesPanel({
               </div>
             ) : (
               <>
-                <p className="rp-note-modal-content">{selectedNote.content}</p>
+                <div className="rp-note-modal-content"><MarkdownContent content={selectedNote.content} /></div>
                 {Array.isArray(selectedNote.citations) && selectedNote.citations.length > 0 && (
                   <div className="rp-note-modal-sources">
                     <h3>Nguồn trích dẫn</h3>
@@ -445,6 +546,10 @@ export default function ResearchPage() {
   const [selectedDocumentIds, setSelectedDocumentIds] = useState(() => location.state?.selectedDocumentIds || location.state?.researchSession?.selected_document_ids || []);
   const [selectedDocuments, setSelectedDocuments] = useState(() => location.state?.selectedDocuments || []);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [exportingDocx, setExportingDocx] = useState(false);
+  const [flashcardModal, setFlashcardModal] = useState(null);
+  const [generatingFlashcards, setGeneratingFlashcards] = useState(false);
+  const [savingFlashcards, setSavingFlashcards] = useState(false);
 
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
@@ -705,14 +810,43 @@ export default function ResearchPage() {
     await startChatRequest({ question, history, mode: "new" });
   };
 
+  const handleGenerateFlashcards = async () => {
+    if (!researchSessionId) {
+      showToast("error", "Không tìm thấy phiên nghiên cứu để tạo flashcards.");
+      return;
+    }
+    if (!selectedDocumentIds.length) {
+      showToast("error", "Chọn tài liệu để tạo flashcards.");
+      return;
+    }
+    setGeneratingFlashcards(true);
+    try {
+      const result = await api.generateFlashcards(researchSessionId, { selected_document_ids: selectedDocumentIds, count: 5 }, token);
+      const flashcards = result?.flashcards || [];
+      if (!flashcards.length) throw new Error("Không tạo được flashcards.");
+      setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards, canSave: true });
+      showToast("success", "Đã tạo flashcards.");
+    } catch (err) {
+      showToast("error", err.message || "Thiếu GROQ_API_KEY hoặc không thể tạo flashcards.");
+    } finally {
+      setGeneratingFlashcards(false);
+    }
+  };
+
   const runQuickAction = async (action) => {
-    if (loading) return;
+    if (loading || generatingFlashcards) return;
     if (!selectedDocumentIds.length) {
       showToast("error", "Vui lòng chọn ít nhất một tài liệu để sử dụng tính năng này.");
       return;
     }
-    if (action.requiresTwo && selectedDocumentIds.length < 2) return;
-    setQuickActionsOpen(false);
+    if (action.requiresTwo && selectedDocumentIds.length < 2) {
+      showToast("error", "Cần chọn ít nhất 2 tài liệu để so sánh.");
+      return;
+    }
+    if (action.special === "flashcards") {
+      await handleGenerateFlashcards();
+      return;
+    }
     const prompt = action.prompt;
     const userMessage = {
       id: crypto.randomUUID?.() || `${Date.now()}-quick-action`,
@@ -723,6 +857,57 @@ export default function ResearchPage() {
     const history = chatHistory;
     setMessages((prev) => [...prev, userMessage]);
     await startChatRequest({ question: prompt, history, mode: "new" });
+  };
+
+  const handleExportDocx = async () => {
+    if (!researchSessionId || exportingDocx) return;
+    setExportingDocx(true);
+    showToast("success", "Đang tạo file chia sẻ...");
+    try {
+      const response = await api.exportResearchSessionDocx(researchSessionId, token);
+      const blob = new Blob([response.data], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      const contentDisposition = response.headers?.["content-disposition"] || "";
+      const match = contentDisposition.match(/filename="?([^";]+)"?/i);
+      const filename = match?.[1] || `research-chat-${new Date().toISOString().slice(0, 10)}.docx`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showToast("success", "Đã tải file chia sẻ.");
+    } catch (err) {
+      showToast("error", err.message || "Không thể tạo file chia sẻ.");
+    } finally {
+      setExportingDocx(false);
+    }
+  };
+
+  const handleSaveFlashcardsToNotes = async () => {
+    const cards = flashcardModal?.flashcards || [];
+    if (!cards.length || savingFlashcards) return;
+    setSavingFlashcards(true);
+    try {
+      const fileNames = selectedDocuments.length ? selectedDocuments.map((doc) => doc.filename).join(", ") : "tài liệu đã chọn";
+      const payload = {
+        title: `Flashcards từ ${fileNames}`.slice(0, 180),
+        content: JSON.stringify({ flashcards: cards }, null, 2),
+        note_type: "flashcards",
+        metadata: { flashcards: cards },
+        citations: [],
+      };
+      const result = await api.createWorkspaceNote(notebookId, payload, token);
+      const createdNote = result?.note;
+      if (!createdNote) throw new Error("Không thể tạo ghi chú");
+      setNotes((prev) => [createdNote, ...prev]);
+      showToast("success", "Đã lưu flashcards vào ghi chú.");
+    } catch (err) {
+      showToast("error", err.message || "Không thể lưu flashcards.");
+    } finally {
+      setSavingFlashcards(false);
+    }
   };
 
   const handleClearHistory = async () => {
@@ -843,7 +1028,6 @@ export default function ResearchPage() {
   };
 
   const handleDeleteNote = async (noteId) => {
-    if (!window.confirm('Bạn có chắc muốn xoá ghi chú này không?')) return;
     try {
       await api.deleteNote(noteId, token);
       const deletedNote = notes.find((note) => note.id === noteId);
@@ -864,6 +1048,11 @@ export default function ResearchPage() {
   };
 
   const handleOpenNote = (note) => {
+    const cards = getFlashcardsFromNote(note);
+    if (cards.length) {
+      setFlashcardModal({ title: note.title || "Flashcards", flashcards: cards, canSave: false });
+      return;
+    }
     setSelectedNote(note);
     setNoteDetailMode('view');
     setNoteDetailDraft({ title: note.title || '', content: note.content || '' });
@@ -957,6 +1146,36 @@ export default function ResearchPage() {
           font-size: 15px; font-weight: 600; color: #e8e0d0;
           flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
+
+        .rp-share-btn { border: 1px solid rgba(196,164,100,0.28); background: rgba(196,164,100,0.1); color: #c4a464; border-radius: 9px; padding: 7px 11px; font-size: 12px; cursor: pointer; }
+        .rp-share-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .rp-actions-col { width: 300px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid rgba(255,255,255,0.06); }
+        .rp-actions-list { flex: 1; overflow-y: auto; padding: 16px; display: grid; gap: 10px; align-content: start; }
+        .rp-action-helper { margin: 14px 16px 0; border: 1px dashed rgba(196,164,100,0.22); background: rgba(196,164,100,0.06); color: #c4a464; border-radius: 12px; padding: 11px; font-size: 12px; line-height: 1.45; }
+        .rp-action-card { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 13px 14px; color: #d4cfc8; cursor: pointer; font-size: 12px; transition: border-color .2s, background .2s, color .2s, transform .15s; }
+        .rp-action-card:hover:not(:disabled) { border-color: rgba(196,164,100,0.35); background: rgba(196,164,100,0.06); color: #c4a464; transform: translateY(-1px); }
+        .rp-action-card:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
+        .rp-action-icon { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 9px; background: rgba(196,164,100,0.1); color: #c4a464; border: 1px solid rgba(196,164,100,0.15); }
+        .rp-markdown { white-space: normal; }
+        .rp-markdown p { margin: 0 0 10px; }
+        .rp-markdown p:last-child { margin-bottom: 0; }
+        .rp-markdown ul, .rp-markdown ol { padding-left: 20px; margin: 8px 0 10px; }
+        .rp-markdown li { margin: 4px 0; }
+        .rp-markdown h1, .rp-markdown h2, .rp-markdown h3 { margin: 12px 0 8px; color: #e8e0d0; line-height: 1.35; }
+        .rp-markdown code { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+        .rp-markdown pre { overflow-x: auto; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px; margin: 10px 0; }
+        .rp-markdown pre code { background: transparent; border: none; padding: 0; }
+        .rp-modal-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.62); display: flex; align-items: center; justify-content: center; padding: 22px; }
+        .rp-flashcard-modal { width: min(560px, 96vw); max-height: 90vh; overflow-y: auto; border-radius: 20px; border: 1px solid rgba(255,255,255,.1); background: #17130f; box-shadow: 0 28px 80px rgba(0,0,0,.55); padding: 20px; }
+        .rp-flashcard { min-height: 220px; margin: 18px 0; border-radius: 18px; border: 1px solid rgba(196,164,100,.22); background: linear-gradient(145deg, rgba(196,164,100,.12), rgba(255,255,255,.035)); display: flex; flex-direction: column; justify-content: center; padding: 26px; text-align: center; }
+        .rp-flashcard.flipped { border-color: rgba(120,190,150,.28); background: linear-gradient(145deg, rgba(120,190,150,.12), rgba(255,255,255,.035)); }
+        .rp-flashcard-side-label { color: #c4a464; text-transform: uppercase; letter-spacing: .12em; font-size: 11px; margin-bottom: 14px; }
+        .rp-flashcard p { color: #e8e0d0; font-family: 'Lora', Georgia, serif; font-size: 18px; line-height: 1.7; }
+        .rp-flashcard-controls, .rp-flashcard-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .rp-flashcard-controls button { flex: 1; border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.04); color: #d4cfc8; border-radius: 10px; padding: 9px 10px; cursor: pointer; }
+        .rp-flashcard-controls button:disabled { opacity: .35; cursor: not-allowed; }
+        .rp-flashcard-footer { margin-top: 14px; color: #8a8070; font-size: 12px; }
+        @media (max-width: 1040px) { .rp-actions-col { width: 250px; } .rp-notes-col { width: 300px; } }
         .rp-clear-history { border: 1px solid rgba(224,120,120,0.25); background: rgba(224,120,120,0.08); color: #e07878; border-radius: 9px; padding: 7px 11px; font-size: 12px; cursor: pointer; }
         .rp-clear-history:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -1097,10 +1316,17 @@ export default function ResearchPage() {
           <Link to={`/notebooks/${notebookId}`} className="rp-back">← Notebook</Link>
           <div className="rp-divider" />
           <h1 className="rp-title">{researchSession?.title || "Nghiên cứu tài liệu"}</h1>
+          <button className="rp-share-btn" onClick={handleExportDocx} disabled={!researchSessionId || exportingDocx}>{exportingDocx ? "Đang tạo..." : "Chia sẻ DOCX"}</button>
           <button className="rp-clear-history" onClick={handleClearHistory} disabled={!researchSessionId || loading}>Xóa lịch sử phiên này</button>
         </header>
 
         <div className="rp-body">
+          <QuickActionsSidebar
+            actions={QUICK_ACTIONS}
+            selectedDocumentIds={selectedDocumentIds}
+            loading={loading || generatingFlashcards}
+            onAction={runQuickAction}
+          />
           <div className="rp-chat-col">
             <div className="rp-messages">
               {selectedDocumentIds.length > 0 && (
@@ -1193,39 +1419,6 @@ export default function ResearchPage() {
                   <button className="rp-send-btn" onClick={handleSubmit} disabled={!input.trim()} title="Gửi (Enter)">↑</button>
                 )}
               </div>
-              <div className="rp-quick-actions" ref={quickActionsRef}>
-                <button
-                  type="button"
-                  className="rp-plus-btn"
-                  aria-label="Mở tính năng nhanh"
-                  onClick={() => setQuickActionsOpen((open) => !open)}
-                  disabled={loading}
-                >
-                  +
-                </button>
-                <span className="rp-quick-label">Tính năng nhanh</span>
-                {quickActionsOpen && (
-                  <div className="rp-quick-menu">
-                    {QUICK_ACTIONS.map((action) => {
-                      const disabled = !selectedDocumentIds.length || (action.requiresTwo && selectedDocumentIds.length < 2);
-                      return (
-                        <button
-                          key={action.id}
-                          type="button"
-                          className="rp-quick-item"
-                          disabled={disabled || loading}
-                          title={action.requiresTwo && selectedDocumentIds.length < 2 ? "Cần chọn ít nhất 2 tài liệu để so sánh." : action.label}
-                          aria-label={action.label}
-                          onClick={() => runQuickAction(action)}
-                        >
-                          <span>{action.icon}</span>
-                          <span>{action.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
               <p className="rp-hint">Enter để gửi · Shift+Enter xuống dòng</p>
             </div>
           </div>
@@ -1242,9 +1435,27 @@ export default function ResearchPage() {
             onSaveEdit={handleSaveEditNote}
             onDeleteNote={handleDeleteNote}
             onCloseCitation={() => setActiveCitationIndex(null)}
+            selectedNote={selectedNote}
+            noteDetailMode={noteDetailMode}
+            noteDetailDraft={noteDetailDraft}
+            onOpenNote={handleOpenNote}
+            onCloseNote={handleCloseNote}
+            onStartDetailEdit={handleStartDetailEdit}
+            onNoteDetailDraftChange={setNoteDetailDraft}
+            onSaveDetailEdit={handleSaveDetailEditNote}
           />
         </div>
       </div>
+
+      {flashcardModal && (
+        <FlashcardModal
+          title={flashcardModal.title}
+          flashcards={flashcardModal.flashcards}
+          onClose={() => setFlashcardModal(null)}
+          onSave={flashcardModal.canSave ? handleSaveFlashcardsToNotes : null}
+          saving={savingFlashcards}
+        />
+      )}
 
       {toast && <div className={`rp-toast ${toast.type}`}>{toast.message}</div>}
     </>

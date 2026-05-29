@@ -54,8 +54,8 @@ Backend sử dụng FastAPI `HTTPException`, response lỗi có dạng:
 | `EMAIL_NOT_CONFIRMED` | 401 | Email chưa được xác nhận qua Supabase |
 | `INVALID_CREDENTIALS` | 401 | Sai email hoặc mật khẩu |
 | `FILE_TOO_LARGE` | 413 | File vượt quá 50MB |
-| `INVALID_FILE_TYPE` | 415 | Chỉ chấp nhận PDF |
-| `PARSE_FAILED` | 422 | Không thể đọc nội dung PDF |
+| `INVALID_FILE_TYPE` | 415 | Chỉ chấp nhận PDF, DOCX, TXT hoặc MD; DOC/RTF trả thông báo chưa hỗ trợ rõ ràng |
+| `PARSE_FAILED` | 422 | Không đọc được nội dung văn bản từ file này |
 | `DOC_NOT_FOUND` | 404 | Không tìm thấy tài liệu hoặc notebook |
 | `EMBED_FAILED` | 500 | Lỗi khi gọi Gemini Embedding |
 | `LLM_FAILED` | 500 | Lỗi khi gọi Gemini Flash |
@@ -144,7 +144,7 @@ Backend sử dụng FastAPI `HTTPException`, response lỗi có dạng:
 
 ## Endpoints — Notebooks *(cần token)*
 
-Notebooks là đơn vị tổ chức tài liệu. Mỗi notebook chứa nhiều PDF. Câu hỏi được trả lời dựa trên toàn bộ tài liệu trong notebook.
+Notebooks là đơn vị tổ chức tài liệu. Mỗi notebook chứa nhiều tài liệu nghiên cứu (PDF, DOCX, TXT, MD). Câu hỏi được trả lời dựa trên toàn bộ tài liệu trong notebook.
 
 ---
 
@@ -221,15 +221,15 @@ Notebooks là đơn vị tổ chức tài liệu. Mỗi notebook chứa nhiều 
 
 **`POST /api/notebooks/{notebook_id}/upload`**
 
-Upload **nhiều file PDF** cùng lúc. Mỗi file được parse → chunk → embed → lưu vào Supabase độc lập.
+Upload **nhiều file tài liệu** cùng lúc. PDF, DOCX, TXT và MD được parse → chunk → embed → lưu vào Supabase độc lập. DOC cũ và RTF được nhận diện nhưng trả lỗi rõ để user chuyển sang DOCX/PDF.
 
 #### Request
 ```
 Content-Type: multipart/form-data
 Authorization: Bearer <access_token>
 
-files: <PDF file 1, max 50MB>
-files: <PDF file 2, max 50MB>
+files: <PDF/DOCX/TXT/MD file 1, max 50MB>
+files: <PDF/DOCX/TXT/MD file 2, max 50MB>
 ...
 ```
 
@@ -244,17 +244,20 @@ files: <PDF file 2, max 50MB>
       {
         "filename": "attention_is_all_you_need.pdf",
         "doc_id": "uuid-v4-string",
+        "id": "uuid-v4-string",
+        "file_type": "pdf",
+        "status": "ready",
         "page_count": 15,
         "chunk_count": 42,
-        "created_at": "2024-01-15T10:30:00Z",
-        "status": "ready"
+        "created_at": "2024-01-15T10:30:00Z"
       }
     ],
     "failed": [
       {
         "filename": "corrupted.pdf",
         "status": "error",
-        "error": "PARSE_FAILED"
+        "error": "PARSE_FAILED",
+        "message": "Không đọc được nội dung văn bản từ file này."
       }
     ],
     "total": 2
@@ -281,6 +284,8 @@ files: <PDF file 2, max 50MB>
       {
         "doc_id": "uuid-v4-string",
         "filename": "attention_is_all_you_need.pdf",
+        "file_type": "pdf",
+        "status": "ready",
         "page_count": 15,
         "chunk_count": 42,
         "created_at": "2024-01-15T10:30:00Z"
@@ -495,6 +500,8 @@ Notes thuộc một workspace hiện được map với `notebook_id`. User ch�
         "content": "Transformer sử dụng...",
         "citations": [],
         "source_message_id": "assistant-message-id",
+        "note_type": "note",
+        "metadata": {},
         "created_at": "2024-01-15T10:30:00Z",
         "updated_at": "2024-01-15T10:35:00Z"
       }
@@ -514,7 +521,9 @@ Notes thuộc một workspace hiện được map với `notebook_id`. User ch�
   "title": "Transformer sử dụng cơ chế Self-Attention",
   "content": "Transformer sử dụng...",
   "citations": [],
-  "source_message_id": "assistant-message-id"
+  "source_message_id": "assistant-message-id",
+  "note_type": "note",
+  "metadata": {}
 }
 ```
 
@@ -528,7 +537,9 @@ Notes thuộc một workspace hiện được map với `notebook_id`. User ch�
 {
   "title": "Tiêu đề mới",
   "content": "Nội dung đã chỉnh sửa",
-  "citations": []
+  "citations": [],
+  "note_type": "flashcards",
+  "metadata": { "flashcards": [{ "front": "...", "back": "..." }] }
 }
 ```
 
@@ -542,6 +553,51 @@ Notes thuộc một workspace hiện được map với `notebook_id`. User ch�
   "data": { "note_id": "note-uuid", "deleted": true }
 }
 ```
+
+---
+
+## Endpoints — Export & Flashcards *(cần token)*
+
+### E1. Xuất lịch sử chat ra DOCX
+
+**`GET /api/research-sessions/{session_id}/export.docx`**
+
+Backend kiểm tra quyền sở hữu phiên nghiên cứu qua `research_sessions → notebooks → user_id`, đọc `research_session_messages`, sau đó tạo file DOCX bằng `python-docx`.
+
+#### Response `200 OK`
+
+```
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="research-chat-<session-title>.docx"
+```
+
+Nội dung DOCX gồm tiêu đề phiên, ngày xuất, các message luân phiên `User`/`Assistant`, và phần `Nguồn tham khảo` cho citation của assistant nếu có.
+
+### F1. Tạo flashcards bằng Groq
+
+**`POST /api/research-sessions/{session_id}/flashcards/generate`**
+
+#### Request Body
+```json
+{
+  "selected_document_ids": ["doc_a", "doc_b"],
+  "count": 5
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "flashcards": [
+      { "front": "Câu hỏi/khái niệm", "back": "Câu trả lời/giải thích" }
+    ]
+  }
+}
+```
+
+Nếu thiếu `GROQ_API_KEY` hoặc Groq không tạo được JSON hợp lệ, backend trả lỗi `GROQ_FAILED` với message: `Thiếu GROQ_API_KEY hoặc không thể tạo flashcards.`
 
 ---
 
@@ -579,6 +635,8 @@ interface Notebook {
 interface Document {
   doc_id: string;
   filename: string;
+  file_type: "pdf" | "docx" | "txt" | "md" | string;
+  status: "ready" | "error" | string;
   page_count: number;
   chunk_count: number;
   created_at: string;   // ISO 8601
@@ -619,7 +677,7 @@ interface ChatMessage {
 | `password` length | Tối thiểu 6 ký tự |
 | `notebook name` length | 1 – 200 ký tự |
 | File size | 50 MB |
-| File type | PDF only |
+| File type | PDF, DOCX, TXT, MD supported; DOC/RTF rejected with clear messages |
 | `question` length | 1000 ký tự |
 | `chat_history` length | Tối đa 20 messages (10 turns) |
 | Top-k chunks retrieval | 5 chunks |
