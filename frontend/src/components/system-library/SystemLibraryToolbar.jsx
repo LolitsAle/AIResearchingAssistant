@@ -9,7 +9,7 @@ export default function SystemLibraryToolbar({ total, selectedCount, bookmarksOn
       </div>
       <div className="sl-toolbar__actions">
         <button type="button" className={`sl-toolbar-btn ${bookmarksOnly ? 'is-active' : ''}`} onClick={onToggleBookmarksOnly}>
-          <Bookmark size={15} /> Tủ sách của tôi
+          <Bookmark size={15} /> Đã ghim
         </button>
         <button type="button" className="sl-toolbar-btn" onClick={onCompareSelected} disabled={selectedCount < 2}>
           <GitCompare size={15} /> So sánh ({selectedCount})

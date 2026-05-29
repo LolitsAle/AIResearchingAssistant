@@ -82,3 +82,52 @@ begin
       using (auth.uid() = user_id);
   end if;
 end $$;
+
+-- Keep updated_at stable for admin/dev edits.
+create or replace function public.set_system_documents_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_system_documents_updated_at on public.system_documents;
+create trigger trg_system_documents_updated_at
+before update on public.system_documents
+for each row execute function public.set_system_documents_updated_at();
+
+-- Semantic document search used by backend service `match_system_documents`.
+-- It ranks documents by their best matching chunk while still returning one row per document.
+create or replace function public.match_system_documents(
+  query_embedding vector(768),
+  match_count int default 20,
+  match_threshold float default 0
+)
+returns table (
+  id uuid,
+  document_id uuid,
+  title text,
+  similarity float
+)
+language sql stable
+as $$
+  with ranked_chunks as (
+    select
+      d.id,
+      d.id as document_id,
+      d.title,
+      max(1 - (c.embedding <=> query_embedding)) as similarity
+    from public.system_document_chunks c
+    join public.system_documents d on d.id = c.document_id
+    where c.embedding is not null
+    group by d.id, d.title
+  )
+  select id, document_id, title, similarity
+  from ranked_chunks
+  where similarity >= match_threshold
+  order by similarity desc
+  limit match_count;
+$$;

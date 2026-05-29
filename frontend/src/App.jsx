@@ -7,7 +7,6 @@ import ResearchPage from './pages/ResearchPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import SystemLibraryPage from './pages/SystemLibraryPage';
-import MyLibraryPage from './pages/MyLibraryPage';
 
 const ProtectedRoute = ({ children }) => {
   const { token, isReady } = useAuth();
@@ -37,8 +36,6 @@ export default function App() {
             <Route path="/notebooks/:notebookId" element={<NotebookPage />} />
             <Route path="/research/:notebookId" element={<ResearchPage />} />
             <Route path="/system-library" element={<SystemLibraryPage />} />
-            <Route path="/my-library" element={<MyLibraryPage />} />
-            <Route path="/history" element={<Navigate to="/" replace />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" />} />

@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     MIN_SIMILARITY: float = 0.5
     RAG_RELEVANCE_THRESHOLD: float = 0.35
 
+    # System Library admin upload account. Override these in production.
+    SYSTEM_LIBRARY_ADMIN_EMAIL: str = "admin"
+    SYSTEM_LIBRARY_ADMIN_PASSWORD: str = "admin"
+
     # Limits
     MAX_UPLOAD_MB: int = 50
     MAX_FILE_SIZE_MB: int = 50  # Backward-compatible alias for older env files

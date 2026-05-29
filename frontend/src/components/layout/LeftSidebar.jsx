@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { BookOpen, Library, Bookmark, History, ChevronLeft, LogOut, Sparkles } from 'lucide-react';
+import { BookOpen, Library, ChevronLeft, LogOut, Sparkles } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 
@@ -15,18 +15,6 @@ const NAV_ITEMS = [
     icon: Library,
     label: 'Thư viện Hệ thống',
     description: 'Kho tài liệu được chuẩn hóa, tìm kiếm ngữ nghĩa và sẵn sàng cho RAG.',
-  },
-  {
-    to: '/my-library',
-    icon: Bookmark,
-    label: 'Tủ sách của tôi',
-    description: 'Các tài liệu hệ thống bạn đã ghim để nghiên cứu sau.',
-  },
-  {
-    to: '/history',
-    icon: History,
-    label: 'Lịch sử Nghiên cứu',
-    description: 'Theo dõi nhanh các phiên nghiên cứu gần đây.',
   },
 ];
 
@@ -46,7 +34,7 @@ const STYLES = `
     border-right: 1px solid rgba(255,255,255,0.08);
     box-shadow: 22px 0 60px rgba(0,0,0,0.35);
     transition: width 0.2s ease, transform 0.22s ease;
-    font-family: 'DM Sans', system-ui, sans-serif;
+    font-family: 'Lora', Georgia, serif;
   }
   .left-sidebar.is-collapsed { width: 92px; }
   .left-sidebar__brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 12px; min-height: 54px; }
@@ -140,6 +128,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
   const email = user?.email || 'researcher@local';
   const initial = email.trim().charAt(0).toUpperCase();
 
+
   const handleLogout = async () => {
     try { await api.logout(token); } catch {}
     logoutContext();
@@ -179,6 +168,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
           </NavLink>
         ))}
       </nav>
+
 
       <div className="left-sidebar__spacer" />
       <div className="left-sidebar__user" title={collapsed ? email : undefined}>

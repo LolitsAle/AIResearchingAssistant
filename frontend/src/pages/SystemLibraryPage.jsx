@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Library, Sparkles } from 'lucide-react';
+import { AlertCircle, Library, Sparkles, UploadCloud, ShieldCheck } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import SystemLibrarySearchBar from '../components/system-library/SystemLibrarySearchBar';
@@ -23,7 +23,7 @@ const STYLES = `
     background:
       radial-gradient(ellipse at 40% 0%, rgba(196,164,100,0.11), transparent 42%),
       linear-gradient(180deg, #0f0d0a 0%, #12100c 100%);
-    font-family: 'DM Sans', system-ui, sans-serif;
+    font-family: 'Lora', Georgia, serif;
   }
   .sl-hero {
     position: relative;
@@ -36,6 +36,7 @@ const STYLES = `
       linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
     box-shadow: 0 30px 90px rgba(0,0,0,0.32);
   }
+  .sl-page button, .sl-page input, .sl-page select, .sl-page textarea { font-family: inherit; }
   .sl-hero__eyebrow { display: inline-flex; align-items: center; gap: 8px; color: #d8bd77; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .sl-hero h1 { margin: 12px 0 10px; color: #f3ebdc; font-family: 'Lora', Georgia, serif; font-size: clamp(30px, 5vw, 54px); line-height: 1.04; max-width: 920px; }
   .sl-hero p { max-width: 760px; color: #9f9587; line-height: 1.7; font-size: 15px; }
@@ -67,7 +68,54 @@ const STYLES = `
     font-weight: 800;
     cursor: pointer;
   }
-  .sl-search__button:disabled, .sl-toolbar-btn:disabled, .sl-chat-action:disabled { opacity: .42; cursor: not-allowed; }
+  .sl-search__button:disabled, .sl-toolbar-btn:disabled, .sl-chat-action:disabled, .sl-admin-upload__button:disabled { opacity: .42; cursor: not-allowed; }
+  .sl-admin-upload {
+    margin-top: 18px;
+    padding: 16px;
+    border-radius: 20px;
+    border: 1px solid rgba(196,164,100,0.18);
+    background: rgba(0,0,0,0.18);
+  }
+  .sl-admin-upload__summary {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #efe6d8;
+    cursor: pointer;
+    text-align: left;
+    padding: 0;
+  }
+  .sl-admin-upload__summary strong { display: flex; align-items: center; gap: 8px; font-size: 15px; color: #f2d48b; }
+  .sl-admin-upload__summary span { color: #9f9587; font-size: 12px; }
+  .sl-admin-upload__form { display: grid; gap: 12px; margin-top: 16px; }
+  .sl-admin-upload__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .sl-admin-upload__field { display: grid; gap: 6px; color: #bfb4a3; font-size: 12px; }
+  .sl-admin-upload__field.is-wide { grid-column: 1 / -1; }
+  .sl-admin-upload__field input, .sl-admin-upload__field select, .sl-admin-upload__field textarea {
+    width: 100%;
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 12px;
+    background: rgba(8,7,5,0.65);
+    color: #eee6d8;
+    padding: 10px 12px;
+    outline: none;
+  }
+  .sl-admin-upload__field textarea { min-height: 72px; resize: vertical; }
+  .sl-admin-upload__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .sl-admin-upload__hint { color: #7f7667; font-size: 12px; }
+  .sl-admin-upload__button {
+    border: 0;
+    border-radius: 14px;
+    padding: 11px 16px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    background: linear-gradient(135deg, #d4b66f, #8a6a30);
+    color: #18130d;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .sl-admin-upload__progress { height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,0.07); }
+  .sl-admin-upload__progress span { display: block; height: 100%; background: linear-gradient(90deg, #72bf82, #d4b66f); transition: width .2s; }
   .sl-spin { animation: slSpin .8s linear infinite; }
   @keyframes slSpin { to { transform: rotate(360deg); } }
   .sl-body { display: grid; grid-template-columns: minmax(220px, 276px) 1fr; gap: 20px; margin-top: 22px; align-items: start; }
@@ -156,6 +204,7 @@ const STYLES = `
     .sl-page { padding-top: 72px; }
     .sl-search { grid-template-columns: auto 1fr; }
     .sl-search__button { grid-column: 1 / -1; width: 100%; }
+    .sl-admin-upload__grid { grid-template-columns: 1fr; }
     .sl-toolbar { align-items: stretch; flex-direction: column; }
     .sl-toolbar__actions { justify-content: stretch; }
     .sl-toolbar-btn { flex: 1 1 auto; }
@@ -189,6 +238,21 @@ export default function SystemLibraryPage({ bookmarksDefault = false }) {
   const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
   const [bookmarksOnly, setBookmarksOnly] = useState(bookmarksDefault);
   const [notice, setNotice] = useState('');
+  const [adminUploadOpen, setAdminUploadOpen] = useState(false);
+  const [adminUploadFile, setAdminUploadFile] = useState(null);
+  const [adminUploadProgress, setAdminUploadProgress] = useState(0);
+  const [adminUploading, setAdminUploading] = useState(false);
+  const [adminUploadForm, setAdminUploadForm] = useState({
+    adminEmail: 'admin',
+    adminPassword: '',
+    title: '',
+    description: '',
+    aiSummary: '',
+    difficultyLevel: 'intermediate',
+    subjectArea: 'Khác',
+    tags: '',
+    accessLevel: 'free',
+  });
   const userPlan = user?.plan || 'free';
 
   useEffect(() => {
@@ -259,7 +323,7 @@ export default function SystemLibraryPage({ bookmarksDefault = false }) {
       else await api.unbookmarkSystemDocument(document.id, token);
     } catch (err) {
       patchDocumentBookmark(document.id, !nextValue);
-      setNotice(err.message || 'Không thể cập nhật Tủ sách của tôi.');
+      setNotice(err.message || 'Không thể cập nhật danh sách đã ghim.');
     }
   };
 
@@ -289,6 +353,41 @@ export default function SystemLibraryPage({ bookmarksDefault = false }) {
   const handleCompareSelected = () => createChatSession(selectedDocumentIds, 'compare');
   const handleCreateCollection = () => createChatSession(selectedDocumentIds, 'collection');
 
+  const updateAdminUploadForm = (field, value) => {
+    setAdminUploadForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleAdminUpload = async (event) => {
+    event.preventDefault();
+    if (!adminUploadFile) {
+      setNotice('Vui lòng chọn tài liệu hệ thống cần upload.');
+      return;
+    }
+    if (!adminUploadForm.adminEmail.trim() || !adminUploadForm.adminPassword) {
+      setNotice('Vui lòng nhập tài khoản admin và mật khẩu admin.');
+      return;
+    }
+    setAdminUploading(true);
+    setAdminUploadProgress(0);
+    setNotice('Đang upload và vector hóa tài liệu hệ thống...');
+    try {
+      const result = await api.uploadSystemDocument({ ...adminUploadForm, file: adminUploadFile }, token, setAdminUploadProgress);
+      const document = result?.document;
+      if (document) {
+        setDocuments((current) => [document, ...current.filter((item) => item.id !== document.id)]);
+        setTotal((current) => current + 1);
+      }
+      setAdminUploadFile(null);
+      setAdminUploadForm((current) => ({ ...current, title: '', description: '', aiSummary: '', tags: '' }));
+      setNotice('Upload thành công. Tài liệu đã được thêm vào system_documents và sẵn sàng cho AI.');
+    } catch (err) {
+      setNotice(err.message || 'Upload tài liệu hệ thống thất bại.');
+    } finally {
+      setAdminUploading(false);
+      setAdminUploadProgress(0);
+    }
+  };
+
   return (
     <div className="sl-page">
       <style>{STYLES}</style>
@@ -303,6 +402,73 @@ export default function SystemLibraryPage({ bookmarksDefault = false }) {
           <span className="sl-stat"><strong>{stats.saved}</strong>đã ghim trong kết quả</span>
         </div>
         <SystemLibrarySearchBar value={query} onChange={setQuery} onSubmit={handleSearchSubmit} loading={loading} />
+        <div className="sl-admin-upload">
+          <button type="button" className="sl-admin-upload__summary" onClick={() => setAdminUploadOpen((value) => !value)}>
+            <strong><ShieldCheck size={17} /> Upload tài liệu hệ thống</strong>
+            <span>Tài khoản admin mặc định: admin / admin</span>
+          </button>
+          {adminUploadOpen && (
+            <form className="sl-admin-upload__form" onSubmit={handleAdminUpload}>
+              <div className="sl-admin-upload__grid">
+                <label className="sl-admin-upload__field">
+                  Tài khoản admin
+                  <input value={adminUploadForm.adminEmail} onChange={(event) => updateAdminUploadForm('adminEmail', event.target.value)} placeholder="admin" />
+                </label>
+                <label className="sl-admin-upload__field">
+                  Mật khẩu admin
+                  <input type="password" value={adminUploadForm.adminPassword} onChange={(event) => updateAdminUploadForm('adminPassword', event.target.value)} placeholder="admin" />
+                </label>
+                <label className="sl-admin-upload__field is-wide">
+                  File tài liệu
+                  <input type="file" accept=".pdf,.docx,.txt,.md" onChange={(event) => setAdminUploadFile(event.target.files?.[0] || null)} />
+                </label>
+                <label className="sl-admin-upload__field">
+                  Tiêu đề
+                  <input value={adminUploadForm.title} onChange={(event) => updateAdminUploadForm('title', event.target.value)} placeholder="Để trống sẽ dùng tên file" />
+                </label>
+                <label className="sl-admin-upload__field">
+                  Chuyên ngành
+                  <input value={adminUploadForm.subjectArea} onChange={(event) => updateAdminUploadForm('subjectArea', event.target.value)} placeholder="Luật, Công nghệ, Kinh tế..." />
+                </label>
+                <label className="sl-admin-upload__field">
+                  Độ khó
+                  <select value={adminUploadForm.difficultyLevel} onChange={(event) => updateAdminUploadForm('difficultyLevel', event.target.value)}>
+                    <option value="basic">basic</option>
+                    <option value="intermediate">intermediate</option>
+                    <option value="advanced">advanced</option>
+                  </select>
+                </label>
+                <label className="sl-admin-upload__field">
+                  Access
+                  <select value={adminUploadForm.accessLevel} onChange={(event) => updateAdminUploadForm('accessLevel', event.target.value)}>
+                    <option value="free">free</option>
+                    <option value="pro">pro</option>
+                    <option value="vip">vip</option>
+                  </select>
+                </label>
+                <label className="sl-admin-upload__field is-wide">
+                  Tags, phân tách bằng dấu phẩy
+                  <input value={adminUploadForm.tags} onChange={(event) => updateAdminUploadForm('tags', event.target.value)} placeholder="Luật_Doanh_Nghiệp, Thuế, Startup" />
+                </label>
+                <label className="sl-admin-upload__field is-wide">
+                  Mô tả
+                  <textarea value={adminUploadForm.description} onChange={(event) => updateAdminUploadForm('description', event.target.value)} placeholder="Mô tả ngắn về tài liệu" />
+                </label>
+                <label className="sl-admin-upload__field is-wide">
+                  AI summary có sẵn
+                  <textarea value={adminUploadForm.aiSummary} onChange={(event) => updateAdminUploadForm('aiSummary', event.target.value)} placeholder="Tùy chọn: tóm tắt do admin/dev chuẩn bị" />
+                </label>
+              </div>
+              {adminUploading && <div className="sl-admin-upload__progress"><span style={{ width: `${adminUploadProgress}%` }} /></div>}
+              <div className="sl-admin-upload__footer">
+                <span className="sl-admin-upload__hint">Backend sẽ parse, chunk, embedding và update thẳng vào system_documents.</span>
+                <button type="submit" className="sl-admin-upload__button" disabled={adminUploading}>
+                  <UploadCloud size={16} /> {adminUploading ? 'Đang xử lý...' : 'Upload vào Thư viện Hệ thống'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
         {notice && <div className="sl-toast">{notice}</div>}
       </section>
 

@@ -7,6 +7,7 @@ const STYLES = `
     min-height: 100vh;
     background: #0f0d0a;
     color: #d4cfc8;
+    font-family: 'Lora', Georgia, serif;
   }
   .app-shell__main {
     min-height: 100vh;

@@ -3,16 +3,18 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
 from app.db.supabase_client import supabase
 from app.services.system_library_service import (
     add_bookmark,
+    import_system_document_from_upload,
     list_or_search_documents,
     remove_bookmark,
     validate_system_documents_for_chat,
+    verify_system_library_admin,
     _get_user_id,
 )
 
@@ -86,6 +88,37 @@ async def bookmark_document(document_id: str, user: dict = Depends(get_current_u
 @router.delete("/documents/{document_id}/bookmark", response_model=dict)
 async def unbookmark_document(document_id: str, user: dict = Depends(get_current_user)):
     return {"success": True, "data": remove_bookmark(document_id, user)}
+
+
+@router.post("/admin/upload", response_model=dict)
+async def upload_system_document(
+    file: UploadFile = File(...),
+    admin_email: str = Form(...),
+    admin_password: str = Form(...),
+    title: str | None = Form(default=None),
+    description: str | None = Form(default=None),
+    ai_summary: str | None = Form(default=None),
+    difficulty_level: str = Form(default="intermediate"),
+    subject_area: str = Form(default="Khác"),
+    tags: str = Form(default=""),
+    access_level: str = Form(default="free"),
+    user: dict = Depends(get_current_user),
+):
+    """Admin-only upload that indexes a file directly into `system_documents`."""
+    verify_system_library_admin(admin_email, admin_password)
+    contents = await file.read()
+    document = await import_system_document_from_upload(
+        file_contents=contents,
+        filename=file.filename or "system-document",
+        title=title,
+        description=description,
+        ai_summary=ai_summary,
+        difficulty_level=difficulty_level,
+        subject_area=subject_area,
+        tags=tags,
+        access_level=access_level,
+    )
+    return {"success": True, "data": {"document": document}}
 
 
 @router.post("/chat-session", response_model=dict)

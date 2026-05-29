@@ -49,7 +49,7 @@ export default function SystemDocumentCard({
           type="button"
           className={`sl-bookmark ${document.bookmarked_by_current_user ? 'is-bookmarked' : ''}`}
           onClick={() => onToggleBookmark(document)}
-          aria-label={document.bookmarked_by_current_user ? 'Bỏ ghim tài liệu' : 'Ghim vào Tủ sách của tôi'}
+          aria-label={document.bookmarked_by_current_user ? 'Bỏ ghim tài liệu' : 'Ghim tài liệu'}
         >
           <Bookmark size={18} fill={document.bookmarked_by_current_user ? 'currentColor' : 'none'} />
         </button>
