@@ -1,12 +1,17 @@
 import logging
+import re
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, List
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.db.supabase_client import supabase
 from app.dependencies import get_current_user
+from app.services.embedder import embed_query
+from app.services.retriever import OUT_OF_SCOPE_WARNING, retrieve_rag_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["research-sessions"])
@@ -258,10 +263,21 @@ class GenerateFlashcardsRequest(BaseModel):
     count: int = Field(default=5, ge=1, le=20)
 
 
-def _safe_export_filename(title: str | None) -> str:
+def _ascii_export_filename(title: str | None) -> str:
     raw = (title or f"research-chat-{datetime.now(timezone.utc).date().isoformat()}").strip()
-    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", " ") else "-" for ch in raw).strip().replace(" ", "-")
-    return f"research-chat-{safe[:80] or 'session'}.docx"
+    normalized = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", normalized).strip("-").lower()
+    return f"research-chat-{(slug[:80] or 'session')}.docx"
+
+
+def _content_disposition_for_docx(title: str | None) -> str:
+    original = (title or f"research-chat-{datetime.now(timezone.utc).date().isoformat()}").strip()
+    if not original.lower().endswith(".docx"):
+        original = f"{original}.docx"
+    return (
+        f'attachment; filename="{_ascii_export_filename(title)}"; '
+        f"filename*=UTF-8''{quote(original.encode('utf-8'))}"
+    )
 
 
 @router.get("/research-sessions/{session_id}/export.docx")
@@ -316,11 +332,10 @@ async def export_research_session_docx(session_id: str, user: dict = Depends(get
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
-    filename = _safe_export_filename(session.get("title"))
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition_for_docx(session.get("title"))},
     )
 
 
@@ -341,23 +356,19 @@ async def generate_research_session_flashcards(
     if not selected:
         raise HTTPException(status_code=400, detail={"code": "INVALID_SELECTED_DOCUMENTS", "message": "Chọn tài liệu để tạo flashcards."})
 
+    rag_query = "Tạo flashcards ôn tập từ các khái niệm, luận điểm, phương pháp và kết quả quan trọng trong tài liệu đã chọn."
     try:
-        resp = (
-            supabase.table("document_chunks")
-            .select("doc_id, section, content, page_number, chunk_index")
-            .eq("notebook_id", session.get("notebook_id"))
-            .in_("doc_id", selected)
-            .order("chunk_index", desc=False)
-            .limit(30)
-            .execute()
-        )
+        query_vector = await embed_query(rag_query)
+        retrieval = await retrieve_rag_context(query_vector, session.get("notebook_id"), selected)
     except Exception as exc:
-        logger.exception("Load flashcard context failed")
+        logger.exception("Load flashcard RAG context failed")
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải nội dung tài liệu."}) from exc
-    rows, error = _supabase_response_data(resp)
-    if error or not rows:
+
+    rows = retrieval.chunks
+    if not rows:
         raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy nội dung tài liệu để tạo flashcards."})
 
+    warning = OUT_OF_SCOPE_WARNING if retrieval.is_out_of_scope else None
     context = "\n\n".join(
         f"[Trang {row.get('page_number') or '?'} - {row.get('section') or 'Unknown'}] {row.get('content') or ''}"
         for row in rows
@@ -369,4 +380,4 @@ async def generate_research_session_flashcards(
         message = str(exc) or "Thiếu GROQ_API_KEY hoặc không thể tạo flashcards."
         raise HTTPException(status_code=500, detail={"code": "GROQ_FAILED", "message": message}) from exc
 
-    return {"success": True, "data": {"flashcards": flashcards}}
+    return {"success": True, "data": {"flashcards": flashcards, "warning": warning}}

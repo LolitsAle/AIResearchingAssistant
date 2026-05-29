@@ -385,7 +385,7 @@ Trả metadata tài liệu đã upload. Nếu chưa generate summary, các trư�
 
 **`POST /api/chat/ask`**
 
-> Tìm kiếm trên **toàn bộ tài liệu trong notebook** (không giới hạn 1 file).
+> Tìm kiếm bằng RAG trên **selected_document_ids** của phiên nghiên cứu trong notebook. `match_chunks` trả về `similarity` (điểm càng cao càng liên quan); nếu top score dưới `RAG_RELEVANCE_THRESHOLD` (mặc định `0.35`) hoặc không có chunk hữu ích, backend vẫn trả lời nhưng thêm `warning`.
 
 #### Request Body
 ```json
@@ -395,7 +395,9 @@ Trả metadata tài liệu đã upload. Nếu chưa generate summary, các trư�
   "chat_history": [
     { "role": "user", "content": "Paper này nói về cái gì?" },
     { "role": "assistant", "content": "Paper này giới thiệu kiến trúc Transformer..." }
-  ]
+  ],
+  "selected_document_ids": ["doc-uuid"],
+  "research_session_id": "session-uuid"
 }
 ```
 
@@ -404,6 +406,12 @@ Trả metadata tài liệu đã upload. Nếu chưa generate summary, các trư�
 {
   "success": true,
   "data": {
+    "warning": null,
+    "message": {
+      "role": "assistant",
+      "content": "Transformer sử dụng cơ chế Self-Attention để...",
+      "citations": []
+    },
     "answer": "Transformer sử dụng cơ chế Self-Attention để...",
     "sources": [
       {
@@ -431,6 +439,11 @@ Trả metadata tài liệu đã upload. Nếu chưa generate summary, các trư�
         "score": 0.92
       }
     ],
+    "suggested_prompts": [
+      "Tóm tắt ý chính của phần vừa trả lời",
+      "Giải thích sâu hơn bằng ví dụ cụ thể",
+      "Tạo câu hỏi ôn tập từ nội dung trên"
+    ],
     "tokens_used": 1240
   }
 }
@@ -454,10 +467,12 @@ Content-Type: text/event-stream
 data: {"type": "status", "status": "reading", "message": "Đang đọc tài liệu..."}
 data: {"type": "status", "status": "retrieving", "message": "Đang tìm đoạn liên quan..."}
 data: {"type": "sources", "sources": [...], "citations": [...]}
+data: {"type": "warning", "warning": "Nội dung câu hỏi của bạn đi xa ra khỏi mức của tài liệu, nên nội dung sau có thể đúng hoặc sai.", "message": "..."}   // chỉ khi out-of-scope
 data: {"type": "status", "status": "generating", "message": "Đang tạo câu trả lời..."}
 data: {"type": "token", "content": "Transformer"}
 data: {"type": "token", "content": " sử dụng"}
-data: {"type": "done"}
+data: {"type": "suggested_prompts", "suggested_prompts": ["...", "...", "..."]}
+data: {"type": "done", "warning": null, "suggested_prompts": ["...", "...", "..."]}
 data: {"type": "error", "code": "LLM_FAILED", "message": "..."}
 ```
 
@@ -568,10 +583,10 @@ Backend kiểm tra quyền sở hữu phiên nghiên cứu qua `research_session
 
 ```
 Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
-Content-Disposition: attachment; filename="research-chat-<session-title>.docx"
+Content-Disposition: attachment; filename="research-chat-<ascii-fallback>.docx"; filename*=UTF-8''<percent-encoded-title>.docx
 ```
 
-Nội dung DOCX gồm tiêu đề phiên, ngày xuất, các message luân phiên `User`/`Assistant`, và phần `Nguồn tham khảo` cho citation của assistant nếu có.
+Nội dung DOCX gồm tiêu đề phiên, ngày xuất, các message luân phiên `User`/`Assistant`, và phần `Nguồn tham khảo` cho citation của assistant nếu có. Header dùng ASCII fallback + RFC 5987 `filename*` để title tiếng Việt như “Nghiên cứu” không bị encode latin-1.
 
 ### F1. Tạo flashcards bằng Groq
 
@@ -592,12 +607,13 @@ Nội dung DOCX gồm tiêu đề phiên, ngày xuất, các message luân phiê
   "data": {
     "flashcards": [
       { "front": "Câu hỏi/khái niệm", "back": "Câu trả lời/giải thích" }
-    ]
+    ],
+    "warning": null
   }
 }
 ```
 
-Nếu thiếu `GROQ_API_KEY` hoặc Groq không tạo được JSON hợp lệ, backend trả lỗi `GROQ_FAILED` với message: `Thiếu GROQ_API_KEY hoặc không thể tạo flashcards.`
+Flashcards dùng RAG trên `selected_document_ids` của phiên. Nếu context yếu, backend vẫn tạo flashcards từ các chunk gần nhất và trả `warning`. Nếu thiếu `GROQ_API_KEY` hoặc Groq không tạo được JSON hợp lệ, backend trả lỗi `GROQ_FAILED` với message: `Thiếu GROQ_API_KEY hoặc không thể tạo flashcards.`
 
 ---
 

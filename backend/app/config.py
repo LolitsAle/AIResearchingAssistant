@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Retrieval
     TOP_K_CHUNKS: int = 5
     MIN_SIMILARITY: float = 0.5
+    RAG_RELEVANCE_THRESHOLD: float = 0.35
 
     # Limits
     MAX_UPLOAD_MB: int = 50

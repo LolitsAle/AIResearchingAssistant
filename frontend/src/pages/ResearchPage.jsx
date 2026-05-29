@@ -10,6 +10,14 @@ const LOADING_LABELS = {
   generating: "Đang tạo câu trả lời...",
 };
 
+const OUT_OF_SCOPE_WARNING = "Nội dung câu hỏi của bạn đi xa ra khỏi mức của tài liệu, nên nội dung sau có thể đúng hoặc sai.";
+
+const FALLBACK_SUGGESTED_PROMPTS = [
+  "Tóm tắt ý chính của tài liệu này",
+  "Giải thích thuật ngữ quan trọng trong tài liệu",
+  "Tạo câu hỏi ôn tập từ nội dung trên",
+];
+
 const QUICK_ACTIONS = [
   { id: "compare", icon: "⇄", label: "So sánh tài liệu", requiresTwo: true, prompt: "Hãy so sánh các tài liệu đã chọn. Trình bày điểm giống nhau, khác nhau, phương pháp nghiên cứu, kết quả chính, đóng góp và hạn chế của từng tài liệu." },
   { id: "main_points", icon: "☑", label: "Trình bày ý chính", prompt: "Hãy trình bày các ý chính của tài liệu đã chọn theo dạng bullet rõ ràng, dễ hiểu." },
@@ -24,6 +32,31 @@ const QUICK_ACTIONS = [
 ];
 
 const isAbortError = (err) => err?.name === "AbortError" || err?.code === "ABORT_ERR";
+
+function normalizeSuggestedPrompts(prompts = []) {
+  const source = Array.isArray(prompts) && prompts.length ? prompts : FALLBACK_SUGGESTED_PROMPTS;
+  return source
+    .map((prompt) => String(prompt || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((prompt, index, arr) => arr.indexOf(prompt) === index)
+    .slice(0, 3)
+    .map((prompt) => (prompt.length > 110 ? `${prompt.slice(0, 107)}...` : prompt));
+}
+
+function hasWarningInContent(content = "") {
+  return String(content || "").trimStart().startsWith(OUT_OF_SCOPE_WARNING);
+}
+
+function parseDownloadFilename(contentDisposition = "") {
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim().replace(/^"|"$/g, ""));
+    } catch {}
+  }
+  const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1] || `research-chat-${new Date().toISOString().slice(0, 10)}.docx`;
+}
 
 function getCitationIndex(source, index) {
   return source?.citation_index || source?.index || index + 1;
@@ -106,11 +139,13 @@ function MarkdownContent({ content = "", citations = [], onCitationClick }) {
   );
 }
 
-function AnswerWithCitations({ content, citations = [], onCitationClick }) {
+function AnswerWithCitations({ content, citations = [], warning = null, onCitationClick }) {
   const hasInlineCitation = /\[(\d+)\]/.test(content || "");
+  const shouldShowWarning = warning && !hasWarningInContent(content);
 
   return (
     <>
+      {shouldShowWarning && <div className="rp-rag-warning" role="note">⚠ {warning}</div>}
       <MarkdownContent content={content || ""} citations={citations} onCitationClick={onCitationClick} />
       {!hasInlineCitation && citations.length > 0 && (
         <span className="rp-citation-footer">
@@ -220,7 +255,7 @@ function QuickActionsSidebar({ actions, selectedDocumentIds, loading, onAction }
   );
 }
 
-function FlashcardModal({ flashcards, title = "Flashcards", onClose, onSave, saving = false }) {
+function FlashcardModal({ flashcards, title = "Flashcards", warning = null, onClose, onSave, saving = false }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const cards = Array.isArray(flashcards) ? flashcards : [];
@@ -245,6 +280,7 @@ function FlashcardModal({ flashcards, title = "Flashcards", onClose, onSave, sav
           </div>
           <button type="button" className="rp-note-modal-close" onClick={onClose} aria-label="Đóng flashcards">×</button>
         </div>
+        {warning && <div className="rp-rag-warning flashcard" role="note">⚠ {warning}</div>}
         <div className={`rp-flashcard ${flipped ? "flipped" : ""}`}>
           <div className="rp-flashcard-side-label">{flipped ? "Back" : "Front"}</div>
           <p>{flipped ? card.back : card.front}</p>
@@ -471,6 +507,7 @@ function MessageBubble({
             <AnswerWithCitations
               content={msg.content || ""}
               citations={citations}
+              warning={msg.warning}
               onCitationClick={onCitationClick}
             />
           )}
@@ -529,6 +566,7 @@ export default function ResearchPage() {
   const [toast, setToast] = useState(null);
   const [streamingAnswer, setStreamingAnswer] = useState("");
   const [streamingCitations, setStreamingCitations] = useState([]);
+  const [streamingWarning, setStreamingWarning] = useState(null);
   const [regeneratingIndex, setRegeneratingIndex] = useState(null);
   const [activeCitationIndex, setActiveCitationIndex] = useState(null);
   const [notes, setNotes] = useState([]);
@@ -540,7 +578,7 @@ export default function ResearchPage() {
   const [noteDetailDraft, setNoteDetailDraft] = useState({ title: "", content: "" });
   const [savingNoteMessageId, setSavingNoteMessageId] = useState(null);
   const [savedMessageIds, setSavedMessageIds] = useState(() => new Set());
-  const [suggestedQuestions, setSuggestedQuestions] = useState(() => location.state?.suggestedQuestions || []);
+  const [suggestedQuestions, setSuggestedQuestions] = useState(() => normalizeSuggestedPrompts(location.state?.suggestedQuestions));
   const [researchSession, setResearchSession] = useState(() => location.state?.researchSession || null);
   const [researchSessionId, setResearchSessionId] = useState(() => location.state?.researchSessionId || location.state?.researchSession?.id || null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState(() => location.state?.selectedDocumentIds || location.state?.researchSession?.selected_document_ids || []);
@@ -560,6 +598,11 @@ export default function ResearchPage() {
   const chatHistory = useMemo(
     () => messages.filter((msg) => msg.role !== "system").map(({ role, content }) => ({ role, content })),
     [messages]
+  );
+
+  const visibleSuggestedPrompts = useMemo(
+    () => normalizeSuggestedPrompts(suggestedQuestions),
+    [suggestedQuestions]
   );
 
   const activeCitation = useMemo(() => {
@@ -679,6 +722,7 @@ export default function ResearchPage() {
     setLoading(false);
     setStreamingAnswer("");
     setStreamingCitations([]);
+    setStreamingWarning(null);
     setRegeneratingIndex(null);
     setNotice("Đã dừng tạo câu trả lời.");
   };
@@ -699,6 +743,8 @@ export default function ResearchPage() {
 
     let fullAnswer = "";
     let latestCitations = [];
+    let latestWarning = null;
+    let latestSuggestedPrompts = visibleSuggestedPrompts;
     let streamFailed = false;
 
     const isActive = () => activeRequestRef.current?.id === requestId && !activeRequestRef.current?.cancelled;
@@ -719,13 +765,23 @@ export default function ResearchPage() {
             setStreamingCitations(latestCitations);
             setLoadingStage("generating");
           },
+          onWarning: (warning) => {
+            if (!isActive()) return;
+            latestWarning = warning || null;
+            setStreamingWarning(latestWarning);
+          },
+          onSuggestedPrompts: (prompts) => {
+            if (!isActive()) return;
+            latestSuggestedPrompts = normalizeSuggestedPrompts(prompts);
+            setSuggestedQuestions(latestSuggestedPrompts);
+          },
           onToken: (chunk) => {
             if (!isActive()) return;
             fullAnswer += chunk;
             setLoadingStage("generating");
             if (mode === "regenerate") {
               setMessages((prev) => prev.map((msg, i) => (
-                i === targetIndex ? { ...msg, content: fullAnswer, citations: latestCitations } : msg
+                i === targetIndex ? { ...msg, content: fullAnswer, citations: latestCitations, warning: latestWarning } : msg
               )));
             } else {
               setStreamingAnswer(fullAnswer);
@@ -738,6 +794,7 @@ export default function ResearchPage() {
               role: "assistant",
               content: fullAnswer,
               citations: latestCitations,
+              warning: hasWarningInContent(fullAnswer) ? null : latestWarning,
             };
 
             if (mode === "regenerate") {
@@ -747,8 +804,10 @@ export default function ResearchPage() {
             }
             setStreamingAnswer("");
             setStreamingCitations([]);
+            setStreamingWarning(null);
             setLoading(false);
             setRegeneratingIndex(null);
+            setSuggestedQuestions(normalizeSuggestedPrompts(latestSuggestedPrompts));
             clearLoadingTimer();
             activeRequestRef.current = null;
           },
@@ -784,6 +843,7 @@ export default function ResearchPage() {
       setLoading(false);
       setStreamingAnswer("");
       setStreamingCitations([]);
+      setStreamingWarning(null);
       setRegeneratingIndex(null);
       clearLoadingTimer();
       activeRequestRef.current = null;
@@ -824,7 +884,7 @@ export default function ResearchPage() {
       const result = await api.generateFlashcards(researchSessionId, { selected_document_ids: selectedDocumentIds, count: 5 }, token);
       const flashcards = result?.flashcards || [];
       if (!flashcards.length) throw new Error("Không tạo được flashcards.");
-      setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards, canSave: true });
+      setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards, warning: result?.warning || null, canSave: true });
       showToast("success", "Đã tạo flashcards.");
     } catch (err) {
       showToast("error", err.message || "Thiếu GROQ_API_KEY hoặc không thể tạo flashcards.");
@@ -867,8 +927,7 @@ export default function ResearchPage() {
       const response = await api.exportResearchSessionDocx(researchSessionId, token);
       const blob = new Blob([response.data], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
       const contentDisposition = response.headers?.["content-disposition"] || "";
-      const match = contentDisposition.match(/filename="?([^";]+)"?/i);
-      const filename = match?.[1] || `research-chat-${new Date().toISOString().slice(0, 10)}.docx`;
+      const filename = parseDownloadFilename(contentDisposition);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -919,6 +978,7 @@ export default function ResearchPage() {
       setSources([]);
       setStreamingAnswer("");
       setStreamingCitations([]);
+      setStreamingWarning(null);
       showToast("success", "Đã xóa lịch sử cuộc trò chuyện.");
     } catch (err) {
       showToast("error", err.message || "Không thể xóa lịch sử cuộc trò chuyện.");
@@ -1175,7 +1235,8 @@ export default function ResearchPage() {
         .rp-flashcard-controls button { flex: 1; border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.04); color: #d4cfc8; border-radius: 10px; padding: 9px 10px; cursor: pointer; }
         .rp-flashcard-controls button:disabled { opacity: .35; cursor: not-allowed; }
         .rp-flashcard-footer { margin-top: 14px; color: #8a8070; font-size: 12px; }
-        @media (max-width: 1040px) { .rp-actions-col { width: 250px; } .rp-notes-col { width: 300px; } }
+        @media (max-width: 1040px) { .rp-actions-col { width: 250px; } .rp-notes-col { width: 300px; } .rp-suggested-chip { max-width: calc(50% - 4px); } }
+        @media (max-width: 720px) { .rp-suggested-prompts { flex-wrap: nowrap; overflow-x: auto; max-height: none; padding-bottom: 2px; } .rp-suggested-chip { max-width: 78vw; flex: 0 0 auto; } }
         .rp-clear-history { border: 1px solid rgba(224,120,120,0.25); background: rgba(224,120,120,0.08); color: #e07878; border-radius: 9px; padding: 7px 11px; font-size: 12px; cursor: pointer; }
         .rp-clear-history:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -1193,6 +1254,7 @@ export default function ResearchPage() {
         .rp-empty-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 680px; margin-top: 10px; }
         .rp-empty-suggestion { border: 1px solid rgba(196,164,100,0.18); background: rgba(196,164,100,0.08); color: #c4a464; border-radius: 999px; padding: 8px 11px; cursor: pointer; font-size: 12px; }
         .rp-empty-suggestion:hover { background: rgba(196,164,100,0.14); border-color: rgba(196,164,100,0.35); }
+        .rp-empty-suggestion:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(196,164,100,0.2); border-color: rgba(196,164,100,0.55); }
 
         .rp-message-row { display: flex; margin-bottom: 16px; }
         .rp-message-row.user { justify-content: flex-end; }
@@ -1203,6 +1265,8 @@ export default function ResearchPage() {
         .rp-bubble.assistant { border-radius: 18px 18px 18px 4px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: #d4cfc8; font-family: 'Lora', Georgia, serif; font-weight: 400; padding-bottom: 34px; }
         .rp-bubble-content { white-space: pre-wrap; }
         .rp-bubble-loading { color: #8a8070; font-style: italic; }
+        .rp-rag-warning { margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(245,158,11,0.32); background: rgba(245,158,11,0.12); color: #f7c76b; font-family: 'DM Sans', sans-serif; font-size: 12.5px; line-height: 1.45; white-space: normal; }
+        .rp-rag-warning.flashcard { margin-top: 14px; margin-bottom: 0; }
         .rp-bubble-actions { position: absolute; right: 10px; bottom: 7px; display: flex; gap: 6px; opacity: 0.35; transition: opacity 0.2s; }
         .rp-bubble.assistant:hover .rp-bubble-actions { opacity: 1; }
         .rp-icon-btn { width: 22px; height: 22px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.04); color: #9a9080; cursor: pointer; font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
@@ -1223,6 +1287,11 @@ export default function ResearchPage() {
         .rp-error, .rp-notice { display: flex; align-items: center; gap: 8px; border-radius: 10px; padding: 9px 14px; font-size: 13px; margin-bottom: 12px; }
         .rp-error { background: rgba(200,80,80,0.08); border: 1px solid rgba(200,80,80,0.18); color: #e07878; }
         .rp-notice { background: rgba(196,164,100,0.08); border: 1px solid rgba(196,164,100,0.16); color: #c4a464; }
+        .rp-suggested-prompts { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; max-height: 76px; overflow: hidden; }
+        .rp-suggested-chip { max-width: min(32%, 280px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid rgba(196,164,100,0.22); background: rgba(196,164,100,0.07); color: #d6b36a; border-radius: 999px; padding: 7px 11px; font-size: 12px; cursor: pointer; transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease; }
+        .rp-suggested-chip:hover:not(:disabled) { background: rgba(196,164,100,0.16); border-color: rgba(196,164,100,0.48); color: #f0d69c; transform: translateY(-1px); }
+        .rp-suggested-chip:focus-visible { outline: none; border-color: rgba(196,164,100,0.72); box-shadow: 0 0 0 3px rgba(196,164,100,0.18); }
+        .rp-suggested-chip:disabled { opacity: .55; cursor: not-allowed; transform: none; }
         .rp-textarea-wrap { display: flex; align-items: flex-end; gap: 10px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; padding: 10px 12px; transition: border-color 0.2s, box-shadow 0.2s; }
         .rp-textarea-wrap:focus-within { border-color: rgba(196,164,100,0.35); box-shadow: 0 0 0 3px rgba(196,164,100,0.06); }
         .rp-textarea { flex: 1; background: transparent; border: none; outline: none; resize: none; color: #d4cfc8; font-family: 'DM Sans', sans-serif; font-size: 14px; line-height: 1.6; max-height: 120px; overflow-y: auto; scrollbar-width: none; }
@@ -1379,6 +1448,7 @@ export default function ResearchPage() {
                       <AnswerWithCitations
                         content={streamingAnswer}
                         citations={streamingCitations}
+                        warning={hasWarningInContent(streamingAnswer) ? null : streamingWarning}
                         onCitationClick={handleCitationClick}
                       />
                       <span style={{ opacity: 0.5 }}>▌</span>
@@ -1399,6 +1469,20 @@ export default function ResearchPage() {
             <div className="rp-input-area">
               {error && <div className="rp-error">⚠ {error}</div>}
               {notice && <div className="rp-notice">■ {notice}</div>}
+              <div className="rp-suggested-prompts" aria-label="Prompt gợi ý">
+                {visibleSuggestedPrompts.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    className="rp-suggested-chip"
+                    onClick={() => handleSuggestedQuestion(prompt)}
+                    disabled={loading}
+                    title={prompt}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
               <div className="rp-textarea-wrap">
                 <textarea
                   ref={textareaRef}
@@ -1451,6 +1535,7 @@ export default function ResearchPage() {
         <FlashcardModal
           title={flashcardModal.title}
           flashcards={flashcardModal.flashcards}
+          warning={flashcardModal.warning}
           onClose={() => setFlashcardModal(null)}
           onSave={flashcardModal.canSave ? handleSaveFlashcardsToNotes : null}
           saving={savingFlashcards}
