@@ -128,7 +128,14 @@ def _normalize_question(value: Any, index: int) -> dict[str, Any] | None:
         if len(choices) != 4:
             return None
         valid_keys = {choice["key"] for choice in choices}
-        answer = _as_str(value.get("answer"))
+        answer = _as_str(value.get("answer")).strip()
+        if answer:
+            answer = answer.strip().upper()
+            if answer not in valid_keys:
+                first = answer[0]
+                second = answer[1:2]
+                if first in valid_keys and (len(answer) == 1 or second in {".", ":", ")", "]", "-", " "}):
+                    answer = first
         if answer not in valid_keys:
             return None
         normalized.update({
@@ -170,11 +177,35 @@ def _normalize_quiz_questions(value: Any, expected_count: int | None = None) -> 
         question = _normalize_question(item, idx)
         if question:
             normalized.append(question)
-    if expected_count is not None and len(normalized) < expected_count:
-        raise ValueError("Groq response did not include enough usable questions")
     if not normalized:
-        raise ValueError("Groq response did not include usable questions")
+        raise ValueError("Groq response did not include any usable questions")
     return normalized[:expected_count] if expected_count else normalized
+
+
+def _build_quiz_prompt(context: str, safe_count: int, allowed: str) -> str:
+    return (
+        "Tạo bộ câu hỏi quiz từ ngữ cảnh tài liệu bên dưới. Không bịa ngoài tài liệu/RAG. "
+        f"Số lượng câu hỏi cần tạo: {safe_count}. Loại câu hỏi: {allowed}. "
+        "Output phải là JSON object hợp lệ. Root key bắt buộc là \"questions\" và questions phải là array. "
+        "Mỗi question phải có type, question, choices, answer, explanation. "
+        "Với multiple_choice, choices phải có đúng 4 lựa chọn key A/B/C/D và answer chỉ là \"A\", \"B\", \"C\" hoặc \"D\"; không trả dạng \"A. Nội dung đáp án\". "
+        "Với true_false, choices là True/False và answer là True hoặc False. "
+        "Không trả Markdown, không bọc code fence, không thêm bất kỳ text nào ngoài JSON.\n\n"
+        "CHÚ Ý ĐỊNH DẠNG: Bạn CHỈ ĐƯỢC PHÉP trả về JSON hợp lệ theo đúng cấu trúc mẫu sau (không dùng Markdown):\n"
+        "{\n"
+        "  \"questions\": [\n"
+        "    {\n"
+        "      \"type\": \"multiple_choice\",\n"
+        "      \"question\": \"Nội dung câu hỏi?\",\n"
+        "      \"choices\": [{\"key\": \"A\", \"text\": \"Lựa chọn 1\"}, {\"key\": \"B\", \"text\": \"Lựa chọn 2\"}, {\"key\": \"C\", \"text\": \"Lựa chọn 3\"}, {\"key\": \"D\", \"text\": \"Lựa chọn 4\"}],\n"
+        "      \"answer\": \"A\",\n"
+        "      \"explanation\": \"Giải thích vì sao đúng...\",\n"
+        "      \"choice_explanations\": {\"A\": \"Giải thích A...\", \"B\": \"Giải thích B...\"}\n"
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        f"Ngữ cảnh:\n{context[:14000]}"
+    )
 
 
 async def generate_quiz_from_context(context: str, count: int = 3, question_type: str = "mixed") -> list[dict[str, Any]]:
@@ -182,14 +213,7 @@ async def generate_quiz_from_context(context: str, count: int = 3, question_type
         raise ValueError("Không có nội dung tài liệu để tạo quiz.")
     safe_count = max(1, min(int(count or 1), 5))
     allowed = "multiple_choice và true_false" if question_type == "mixed" else question_type
-    prompt = (
-        "Tạo bộ câu hỏi trắc nghiệm từ ngữ cảnh tài liệu bên dưới. Không bịa ngoài tài liệu. "
-        f"Số lượng đúng {safe_count}; loại câu hỏi: {allowed}. "
-        "Nếu là multiple_choice: có đúng 4 choices key A/B/C/D, answer là key đúng, explanation, choice_explanations cho từng key. "
-        "Nếu là true_false: choices True/False, answer True hoặc False, explanation, choice_explanations. "
-        "Chỉ trả về JSON hợp lệ theo schema {\"questions\":[...]}; không Markdown.\n\n"
-        f"Ngữ cảnh:\n{context[:14000]}"
-    )
+    prompt = _build_quiz_prompt(context, safe_count, allowed)
     try:
         response = await _client().chat.completions.create(
             model=settings.GROQ_FLASHCARD_MODEL,
