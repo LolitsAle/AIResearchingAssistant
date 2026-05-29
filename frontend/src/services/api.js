@@ -227,6 +227,16 @@ export const api = {
       axiosInstance.post(`/api/research-sessions/${sessionId}/flashcards/generate`, payload, { headers: authHeader(token) })
     ),
 
+  generateQuiz: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/research-sessions/${sessionId}/quizzes/generate`, payload, { headers: authHeader(token) })
+    ),
+
+  generateTest: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/research-sessions/${sessionId}/tests/generate`, payload, { headers: authHeader(token) })
+    ),
+
   // ── CHAT ─────────────────────────────────────────────────────────────────
   sendResearchQuery: ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, options = {}) =>
     unwrapRequest(() =>

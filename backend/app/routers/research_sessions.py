@@ -260,7 +260,49 @@ def _get_owned_session(session_id: str, user_id: str) -> dict:
 
 class GenerateFlashcardsRequest(BaseModel):
     selected_document_ids: List[str] = Field(default_factory=list, max_length=50)
-    count: int = Field(default=5, ge=1, le=20)
+    count: int = Field(default=5, ge=1, le=5)
+
+
+class GenerateQuizRequest(BaseModel):
+    selected_document_ids: List[str] = Field(default_factory=list, max_length=50)
+    count: int = Field(default=3, ge=1, le=5)
+    question_type: str = Field(default="mixed")
+
+
+class GenerateTestRequest(BaseModel):
+    selected_document_ids: List[str] = Field(default_factory=list, min_length=1, max_length=50)
+    count: int = Field(default=10)
+
+
+def _selected_session_documents(session: dict, requested_ids: list[str]) -> list[str]:
+    session_doc_ids = [str(doc_id) for doc_id in (session.get("selected_document_ids") or [])]
+    requested_doc_ids = [str(doc_id) for doc_id in (requested_ids or session_doc_ids)]
+    allowed = set(session_doc_ids)
+    selected = [doc_id for doc_id in requested_doc_ids if doc_id in allowed]
+    if not selected:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_SELECTED_DOCUMENTS", "message": "Vui lòng chọn tài liệu trước khi tạo quiz/test."})
+    return selected
+
+
+def _context_from_chunks(rows: list[dict]) -> str:
+    return "\n\n".join(
+        f"[Trang {row.get('page_number') or '?'} - {row.get('section') or 'Unknown'}] {row.get('content') or ''}"
+        for row in rows
+        if row.get("content")
+    )
+
+
+async def _load_generation_context(session: dict, selected: list[str], rag_query: str) -> tuple[str, str | None]:
+    try:
+        query_vector = await embed_query(rag_query)
+        retrieval = await retrieve_rag_context(query_vector, session.get("notebook_id"), selected)
+    except Exception as exc:
+        logger.exception("Load quiz/test RAG context failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải nội dung tài liệu."}) from exc
+    rows = retrieval.chunks
+    if not rows:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy nội dung tài liệu để tạo quiz/test."})
+    return _context_from_chunks(rows), OUT_OF_SCOPE_WARNING if retrieval.is_out_of_scope else None
 
 
 def _ascii_export_filename(title: str | None) -> str:
@@ -349,31 +391,9 @@ async def generate_research_session_flashcards(
 
     user_id = _get_user_id(user)
     session = _get_owned_session(session_id, user_id)
-    session_doc_ids = [str(doc_id) for doc_id in (session.get("selected_document_ids") or [])]
-    requested_doc_ids = [str(doc_id) for doc_id in (body.selected_document_ids or session_doc_ids)]
-    allowed = set(session_doc_ids)
-    selected = [doc_id for doc_id in requested_doc_ids if doc_id in allowed]
-    if not selected:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_SELECTED_DOCUMENTS", "message": "Chọn tài liệu để tạo flashcards."})
-
+    selected = _selected_session_documents(session, body.selected_document_ids)
     rag_query = "Tạo flashcards ôn tập từ các khái niệm, luận điểm, phương pháp và kết quả quan trọng trong tài liệu đã chọn."
-    try:
-        query_vector = await embed_query(rag_query)
-        retrieval = await retrieve_rag_context(query_vector, session.get("notebook_id"), selected)
-    except Exception as exc:
-        logger.exception("Load flashcard RAG context failed")
-        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải nội dung tài liệu."}) from exc
-
-    rows = retrieval.chunks
-    if not rows:
-        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy nội dung tài liệu để tạo flashcards."})
-
-    warning = OUT_OF_SCOPE_WARNING if retrieval.is_out_of_scope else None
-    context = "\n\n".join(
-        f"[Trang {row.get('page_number') or '?'} - {row.get('section') or 'Unknown'}] {row.get('content') or ''}"
-        for row in rows
-        if row.get("content")
-    )
+    context, warning = await _load_generation_context(session, selected, rag_query)
     try:
         flashcards = await generate_flashcards_from_context(context, body.count)
     except Exception as exc:
@@ -381,3 +401,49 @@ async def generate_research_session_flashcards(
         raise HTTPException(status_code=500, detail={"code": "GROQ_FAILED", "message": message}) from exc
 
     return {"success": True, "data": {"flashcards": flashcards, "warning": warning}}
+
+
+@router.post("/research-sessions/{session_id}/quizzes/generate", response_model=dict)
+async def generate_research_session_quiz(
+    session_id: str,
+    body: GenerateQuizRequest,
+    user: dict = Depends(get_current_user),
+):
+    from app.services.groq_service import generate_quiz_from_context
+
+    if body.question_type not in {"mixed", "multiple_choice", "true_false"}:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_QUESTION_TYPE", "message": "question_type phải là mixed, multiple_choice hoặc true_false."})
+    user_id = _get_user_id(user)
+    session = _get_owned_session(session_id, user_id)
+    selected = _selected_session_documents(session, body.selected_document_ids)
+    rag_query = "Tạo câu hỏi trắc nghiệm ôn tập từ các khái niệm, luận điểm, phương pháp và kết quả quan trọng trong tài liệu đã chọn."
+    context, warning = await _load_generation_context(session, selected, rag_query)
+    try:
+        questions = await generate_quiz_from_context(context, body.count, body.question_type)
+    except Exception as exc:
+        message = str(exc) or "Thiếu GROQ_API_KEY hoặc không thể tạo quiz/test."
+        raise HTTPException(status_code=502, detail={"code": "GROQ_FAILED", "message": message}) from exc
+    return {"success": True, "data": {"quiz": {"id": f"quiz-{session_id}", "title": "Bộ câu hỏi trắc nghiệm", "questions": questions}, "questions": questions, "warning": warning}}
+
+
+@router.post("/research-sessions/{session_id}/tests/generate", response_model=dict)
+async def generate_research_session_test(
+    session_id: str,
+    body: GenerateTestRequest,
+    user: dict = Depends(get_current_user),
+):
+    from app.services.groq_service import generate_test_from_context
+
+    if body.count != 10:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_TEST_COUNT", "message": "Tạo bài kiểm tra yêu cầu đúng 10 câu hỏi."})
+    user_id = _get_user_id(user)
+    session = _get_owned_session(session_id, user_id)
+    selected = _selected_session_documents(session, body.selected_document_ids)
+    rag_query = "Tạo bài kiểm tra 10 câu phối hợp multiple choice, true false, điền từ và tự luận từ tài liệu đã chọn."
+    context, warning = await _load_generation_context(session, selected, rag_query)
+    try:
+        test = await generate_test_from_context(context, 10)
+    except Exception as exc:
+        message = str(exc) or "Thiếu GROQ_API_KEY hoặc không thể tạo quiz/test."
+        raise HTTPException(status_code=502, detail={"code": "GROQ_FAILED", "message": message}) from exc
+    return {"success": True, "data": {"test": test, "warning": warning}}

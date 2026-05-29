@@ -23,11 +23,13 @@ const QUICK_ACTIONS = [
   { id: "main_points", icon: "☑", label: "Trình bày ý chính", prompt: "Hãy trình bày các ý chính của tài liệu đã chọn theo dạng bullet rõ ràng, dễ hiểu." },
   { id: "summarize", icon: "📄", label: "Tóm tắt tài liệu", prompt: "Hãy tóm tắt tài liệu đã chọn, gồm mục tiêu, phương pháp, kết quả và kết luận." },
   { id: "terms", icon: "?", label: "Giải thích thuật ngữ khó", prompt: "Hãy tìm và giải thích các thuật ngữ học thuật khó trong tài liệu đã chọn bằng ngôn ngữ dễ hiểu." },
-  { id: "quiz", icon: "❔", label: "Tạo câu hỏi ôn tập", prompt: "Hãy tạo 1 -> 2 câu hỏi ôn tập từ tài liệu đã chọn, kèm đáp án ngắn." },
+  { id: "quiz_prompt", icon: "❔", label: "Tạo câu hỏi ôn tập", prompt: "Hãy tạo 1 -> 2 câu hỏi ôn tập từ tài liệu đã chọn, kèm đáp án ngắn." },
   { id: "claims", icon: "❞", label: "Trích xuất luận điểm chính", prompt: "Hãy trích xuất các luận điểm chính, bằng chứng hỗ trợ và kết luận từ tài liệu đã chọn." },
   { id: "outline", icon: "☷", label: "Tạo dàn ý nghiên cứu", prompt: "Hãy tạo một dàn ý nghiên cứu dựa trên tài liệu đã chọn, gồm các mục lớn, ý phụ và gợi ý triển khai." },
   { id: "similar_diff", icon: "▦", label: "Tìm điểm giống và khác nhau", prompt: "Hãy tìm các điểm giống và khác nhau giữa các tài liệu đã chọn, trình bày trong bảng nếu phù hợp." },
   { id: "next_questions", icon: "✦", label: "Gợi ý câu hỏi tiếp theo", prompt: "Dựa trên các tài liệu đã chọn và cuộc trò chuyện hiện tại, hãy gợi ý các câu hỏi tiếp theo mà người dùng nên hỏi để hiểu sâu hơn nội dung nghiên cứu." },
+  { id: "quiz", icon: "☑", label: "Tạo trắc nghiệm", special: "quiz" },
+  { id: "test", icon: "📝", label: "Tạo bài kiểm tra", special: "test" },
   { id: "flashcards", icon: "▣", label: "Flashcard", special: "flashcards" },
 ];
 
@@ -221,7 +223,67 @@ function getFlashcardsFromNote(note) {
   return [];
 }
 
-function QuickActionsSidebar({ actions, selectedDocumentIds, loading, onAction }) {
+
+function getQuizFromNote(note) {
+  const quiz = note?.metadata?.quiz;
+  if (quiz?.questions) return quiz;
+  const questions = note?.metadata?.questions;
+  if (Array.isArray(questions)) return { title: note?.title || "Bộ câu hỏi trắc nghiệm", questions };
+  return null;
+}
+
+function getTestFromNote(note) {
+  const test = note?.metadata?.test;
+  if (test?.questions) return test;
+  return null;
+}
+
+function normalizeAnswerText(value = "") {
+  return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function buildFlashcardMarkdown(cards = []) {
+  return cards.map((card, index) => `### Flashcard ${index + 1}\n\n**Front:** ${card.front}\n\n**Back:** ${card.back}`).join("\n\n---\n\n");
+}
+
+function buildQuizMarkdown(quizOrQuestions, title = "Bộ câu hỏi trắc nghiệm") {
+  const questions = Array.isArray(quizOrQuestions) ? quizOrQuestions : quizOrQuestions?.questions || [];
+  return [`# ${title}`, ...questions.map((q, index) => {
+    const answer = q.answer || q.blank_answer || q.sample_answer || "Xem rubric";
+    return `## Câu ${index + 1}: ${q.question}\n\nLoại: ${q.type}\n\nĐáp án: ${answer}\n\nGiải thích: ${q.explanation || ""}`;
+  })].join("\n\n");
+}
+
+function QuickActionsSidebar({
+  actions,
+  selectedDocumentIds,
+  loading,
+  onAction,
+  flashcardCount,
+  onFlashcardCountChange,
+  quizCount,
+  onQuizCountChange,
+  quizType,
+  onQuizTypeChange,
+}) {
+  const renderQuickCount = ({ value, onChange, label, helper }) => (
+    <div className="rp-quick-config" onClick={(e) => e.stopPropagation()}>
+      <div className="rp-quick-config-row">
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <input
+        type="range"
+        min="0"
+        max="5"
+        step="1"
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+      <small>{value === 0 ? "Chọn ít nhất 1 mục để tạo." : helper}</small>
+    </div>
+  );
+
   return (
     <aside className="rp-actions-col">
       <div className="rp-notes-header">
@@ -235,19 +297,36 @@ function QuickActionsSidebar({ actions, selectedDocumentIds, loading, onAction }
       )}
       <div className="rp-actions-list">
         {actions.map((action) => {
-          const disabled = !selectedDocumentIds.length || (action.requiresTwo && selectedDocumentIds.length < 2) || loading;
+          const quickCount = action.special === "flashcards" ? flashcardCount : action.special === "quiz" ? quizCount : 1;
+          const disabled = !selectedDocumentIds.length || (action.requiresTwo && selectedDocumentIds.length < 2) || loading || ((action.special === "flashcards" || action.special === "quiz") && quickCount === 0);
           return (
-            <button
-              key={action.id}
-              type="button"
-              className="rp-action-card"
-              disabled={disabled}
-              title={action.requiresTwo && selectedDocumentIds.length < 2 ? "Cần chọn ít nhất 2 tài liệu để so sánh." : action.label}
-              onClick={() => onAction(action)}
-            >
-              <span className="rp-action-icon">{action.icon}</span>
-              <span>{action.label}</span>
-            </button>
+            <div key={action.id} className="rp-action-wrap">
+              <button
+                type="button"
+                className="rp-action-card"
+                disabled={disabled}
+                title={action.requiresTwo && selectedDocumentIds.length < 2 ? "Cần chọn ít nhất 2 tài liệu để so sánh." : action.label}
+                onClick={() => onAction(action)}
+              >
+                <span className="rp-action-icon">{action.icon}</span>
+                <span>{action.label}</span>
+              </button>
+              {action.special === "flashcards" && renderQuickCount({ value: flashcardCount, onChange: onFlashcardCountChange, label: "Số flashcard", helper: "Tối đa 5 flashcards cho chế độ tạo nhanh." })}
+              {action.special === "quiz" && (
+                <div className="rp-quick-config" onClick={(e) => e.stopPropagation()}>
+                  <label>
+                    Dạng câu hỏi
+                    <select value={quizType} onChange={(e) => onQuizTypeChange(e.target.value)}>
+                      <option value="mixed">Mixed</option>
+                      <option value="multiple_choice">A/B/C/D</option>
+                      <option value="true_false">True/False</option>
+                    </select>
+                  </label>
+                  {renderQuickCount({ value: quizCount, onChange: onQuizCountChange, label: "Số câu", helper: "Tối đa 5 câu cho quiz nhanh." })}
+                </div>
+              )}
+              {action.special === "test" && <small className="rp-action-subnote">Tạo đúng 10 câu phối hợp nhiều dạng.</small>}
+            </div>
           );
         })}
       </div>
@@ -255,7 +334,7 @@ function QuickActionsSidebar({ actions, selectedDocumentIds, loading, onAction }
   );
 }
 
-function FlashcardModal({ flashcards, title = "Flashcards", warning = null, onClose, onSave, saving = false }) {
+function FlashcardModal({ flashcards, title = "Flashcards", warning = null, onClose, onSave, saving = false, onGenerateMore, generatingMore = false }) {
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const cards = Array.isArray(flashcards) ? flashcards : [];
@@ -292,7 +371,127 @@ function FlashcardModal({ flashcards, title = "Flashcards", warning = null, onCl
         </div>
         <div className="rp-flashcard-footer">
           <span>{index + 1}/{cards.length}</span>
-          {onSave && <button type="button" className="rp-note-save" onClick={onSave} disabled={saving}>{saving ? "Đang lưu..." : "Lưu vào ghi chú"}</button>}
+          <div className="rp-flashcard-footer-actions">
+            {onGenerateMore && <button type="button" className="rp-note-cancel" onClick={onGenerateMore} disabled={generatingMore || cards.length >= 5}>{cards.length >= 5 ? "Đã đạt tối đa 5 mục" : generatingMore ? "Đang tạo..." : "Tạo thêm flashcard"}</button>}
+            {onSave && <button type="button" className="rp-note-save" onClick={onSave} disabled={saving}>{saving ? "Đang lưu..." : "Lưu vào ghi chú"}</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function QuizModal({ mode = "quiz", quiz, title, warning = null, onClose, onSave, saving = false, onGenerateMore, generatingMore = false }) {
+  const questions = Array.isArray(quiz) ? quiz : quiz?.questions || [];
+  const [index, setIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [checked, setChecked] = useState({});
+  const [showAll, setShowAll] = useState(false);
+  const current = questions[index] || {};
+  const currentAnswer = answers[current.id] ?? "";
+  const isChecked = Boolean(checked[current.id]);
+
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === "Escape") onClose?.(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!questions.length) return null;
+
+  const setAnswer = (value) => setAnswers((prev) => ({ ...prev, [current.id]: value }));
+  const checkCurrent = () => setChecked((prev) => ({ ...prev, [current.id]: true }));
+  const isObjective = ["multiple_choice", "true_false"].includes(current.type);
+  const isFillBlank = current.type === "fill_blank";
+  const correct = isObjective
+    ? currentAnswer === current.answer
+    : isFillBlank
+      ? (current.acceptable_answers || [current.blank_answer]).map(normalizeAnswerText).includes(normalizeAnswerText(currentAnswer))
+      : null;
+
+  const renderAnswerArea = () => {
+    if (isObjective) {
+      return (
+        <div className="rp-quiz-choices">
+          {(current.choices || []).map((choice) => {
+            const isCorrectChoice = isChecked && choice.key === current.answer;
+            const isWrongChoice = isChecked && currentAnswer === choice.key && choice.key !== current.answer;
+            return (
+              <button
+                type="button"
+                key={choice.key}
+                className={`rp-quiz-choice ${currentAnswer === choice.key ? "selected" : ""} ${isCorrectChoice ? "correct" : ""} ${isWrongChoice ? "wrong" : ""}`}
+                onClick={() => !isChecked && setAnswer(choice.key)}
+              >
+                <strong>{choice.key}</strong><span>{choice.text}</span>
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+    if (isFillBlank) {
+      return <input className="rp-quiz-input" value={currentAnswer} onChange={(e) => setAnswer(e.target.value)} disabled={isChecked} placeholder="Nhập đáp án của bạn..." />;
+    }
+    return <textarea className="rp-quiz-input textarea" value={currentAnswer} onChange={(e) => setAnswer(e.target.value)} placeholder="Nhập câu trả lời tự luận..." rows={5} />;
+  };
+
+  const renderFeedback = () => {
+    if (!isChecked && !showAll) return null;
+    return (
+      <div className="rp-quiz-feedback">
+        {current.type === "essay" ? (
+          <>
+            <strong>Câu trả lời tham khảo</strong>
+            <p>{current.sample_answer}</p>
+            {Array.isArray(current.rubric) && current.rubric.length > 0 && <ul>{current.rubric.map((item, i) => <li key={i}>{item}</li>)}</ul>}
+          </>
+        ) : (
+          <>
+            <strong className={correct ? "ok" : "bad"}>{correct ? "Đúng" : "Chưa đúng"}</strong>
+            <p>Đáp án đúng: <b>{current.answer || current.blank_answer}</b></p>
+          </>
+        )}
+        <small className="rp-quiz-explanation">{current.explanation}</small>
+        {current.choice_explanations && Object.keys(current.choice_explanations).length > 0 && (
+          <div className="rp-choice-explanations">
+            {Object.entries(current.choice_explanations).map(([key, text]) => <small key={key}><b>{key}:</b> {text}</small>)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="rp-modal-overlay" onClick={onClose}>
+      <div className="rp-quiz-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="rp-note-modal-head">
+          <div>
+            <div className="rp-note-modal-kicker">{mode === "test" ? "Bài kiểm tra" : "Quiz"}</div>
+            <h2>{title || quiz?.title || (mode === "test" ? "Bài kiểm tra từ tài liệu" : "Bộ câu hỏi trắc nghiệm")}</h2>
+          </div>
+          <button type="button" className="rp-note-modal-close" onClick={onClose} aria-label="Đóng quiz">×</button>
+        </div>
+        {warning && <div className="rp-rag-warning flashcard" role="note">⚠ {warning}</div>}
+        <div className="rp-quiz-progress">Câu {index + 1}/{questions.length} · {current.type}</div>
+        <div className="rp-quiz-question">{current.question}</div>
+        {renderAnswerArea()}
+        <div className="rp-quiz-actions">
+          <button type="button" className="rp-note-save" onClick={checkCurrent} disabled={isChecked || (!currentAnswer && current.type !== "essay")}>{current.type === "essay" ? "Xem gợi ý đáp án" : "Kiểm tra"}</button>
+          {mode === "test" && <button type="button" className="rp-note-cancel" onClick={() => setShowAll(true)}>Xem toàn bộ đáp án</button>}
+        </div>
+        {renderFeedback()}
+        <div className="rp-flashcard-controls">
+          <button type="button" onClick={() => setIndex(Math.max(0, index - 1))} disabled={index === 0}>← Câu trước</button>
+          <button type="button" onClick={() => setIndex(Math.min(questions.length - 1, index + 1))} disabled={index === questions.length - 1}>Câu tiếp theo →</button>
+        </div>
+        <div className="rp-flashcard-footer">
+          <span>{index + 1}/{questions.length}</span>
+          <div className="rp-flashcard-footer-actions">
+            {onGenerateMore && <button type="button" className="rp-note-cancel" onClick={onGenerateMore} disabled={generatingMore || questions.length >= 5}>{questions.length >= 5 ? "Đã đạt tối đa 5 mục" : generatingMore ? "Đang tạo..." : "Tạo thêm câu hỏi"}</button>}
+            {onSave && <button type="button" className="rp-note-save" onClick={onSave} disabled={saving}>{saving ? "Đang lưu..." : mode === "test" ? "Lưu bài kiểm tra vào ghi chú" : "Lưu vào ghi chú"}</button>}
+          </div>
         </div>
       </div>
     </div>
@@ -588,6 +787,13 @@ export default function ResearchPage() {
   const [flashcardModal, setFlashcardModal] = useState(null);
   const [generatingFlashcards, setGeneratingFlashcards] = useState(false);
   const [savingFlashcards, setSavingFlashcards] = useState(false);
+  const [flashcardCount, setFlashcardCount] = useState(5);
+  const [quizCount, setQuizCount] = useState(3);
+  const [quizType, setQuizType] = useState("mixed");
+  const [quizModal, setQuizModal] = useState(null);
+  const [generatingQuiz, setGeneratingQuiz] = useState(false);
+  const [generatingTest, setGeneratingTest] = useState(false);
+  const [savingQuiz, setSavingQuiz] = useState(false);
 
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
@@ -881,10 +1087,10 @@ export default function ResearchPage() {
     }
     setGeneratingFlashcards(true);
     try {
-      const result = await api.generateFlashcards(researchSessionId, { selected_document_ids: selectedDocumentIds, count: 5 }, token);
+      const result = await api.generateFlashcards(researchSessionId, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(flashcardCount, 5)) }, token);
       const flashcards = result?.flashcards || [];
       if (!flashcards.length) throw new Error("Không tạo được flashcards.");
-      setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards, warning: result?.warning || null, canSave: true });
+      setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards: flashcards.slice(0, 5), warning: result?.warning || null, canSave: true });
       showToast("success", "Đã tạo flashcards.");
     } catch (err) {
       showToast("error", err.message || "Thiếu GROQ_API_KEY hoặc không thể tạo flashcards.");
@@ -893,8 +1099,83 @@ export default function ResearchPage() {
     }
   };
 
+
+  const handleGenerateMoreFlashcards = async () => {
+    const existing = flashcardModal?.flashcards || [];
+    const remaining = 5 - existing.length;
+    if (remaining <= 0) return;
+    setGeneratingFlashcards(true);
+    try {
+      const result = await api.generateFlashcards(researchSessionId, { selected_document_ids: selectedDocumentIds, count: remaining }, token);
+      const more = result?.flashcards || [];
+      setFlashcardModal((prev) => ({ ...prev, flashcards: [...(prev?.flashcards || []), ...more].slice(0, 5), warning: result?.warning || prev?.warning || null }));
+    } catch (err) {
+      showToast("error", err.message || "Không thể tạo thêm flashcards.");
+    } finally {
+      setGeneratingFlashcards(false);
+    }
+  };
+
+  const handleGenerateQuiz = async (extraCount = null) => {
+    if (!researchSessionId) {
+      showToast("error", "Không tìm thấy phiên nghiên cứu để tạo quiz.");
+      return;
+    }
+    if (!selectedDocumentIds.length) {
+      showToast("error", "Vui lòng chọn tài liệu trước khi tạo trắc nghiệm.");
+      return;
+    }
+    const existing = quizModal?.quiz?.questions || [];
+    const requested = extraCount ?? quizCount;
+    const count = Math.max(1, Math.min(requested, 5 - existing.length));
+    if (count <= 0) {
+      showToast("error", "Đã đạt tối đa 5 mục.");
+      return;
+    }
+    setGeneratingQuiz(true);
+    try {
+      const result = await api.generateQuiz(researchSessionId, { selected_document_ids: selectedDocumentIds, count, question_type: quizType }, token);
+      const questions = result?.quiz?.questions || result?.questions || [];
+      if (!questions.length) throw new Error("Không tạo được quiz.");
+      if (existing.length) {
+        setQuizModal((prev) => ({ ...prev, quiz: { ...(prev?.quiz || {}), questions: [...existing, ...questions].slice(0, 5) }, warning: result?.warning || prev?.warning || null }));
+      } else {
+        setQuizModal({ mode: "quiz", title: "Bộ câu hỏi trắc nghiệm", quiz: { title: "Bộ câu hỏi trắc nghiệm", questions: questions.slice(0, 5) }, warning: result?.warning || null, canSave: true });
+      }
+      showToast("success", "Đã tạo trắc nghiệm.");
+    } catch (err) {
+      showToast("error", err.message || "Không thể tạo trắc nghiệm.");
+    } finally {
+      setGeneratingQuiz(false);
+    }
+  };
+
+  const handleGenerateTest = async () => {
+    if (!researchSessionId) {
+      showToast("error", "Không tìm thấy phiên nghiên cứu để tạo bài kiểm tra.");
+      return;
+    }
+    if (!selectedDocumentIds.length) {
+      showToast("error", "Vui lòng chọn tài liệu trước khi tạo bài kiểm tra.");
+      return;
+    }
+    setGeneratingTest(true);
+    showToast("success", "Đang tạo bài kiểm tra từ tài liệu...");
+    try {
+      const result = await api.generateTest(researchSessionId, { selected_document_ids: selectedDocumentIds, count: 10 }, token);
+      const test = result?.test;
+      if (!test?.questions || test.questions.length !== 10) throw new Error("Bài kiểm tra chưa đủ 10 câu.");
+      setQuizModal({ mode: "test", title: test.title || "Bài kiểm tra từ tài liệu đã chọn", quiz: test, warning: result?.warning || null, canSave: true });
+      showToast("success", "Đã tạo bài kiểm tra 10 câu.");
+    } catch (err) {
+      showToast("error", err.message || "Không thể tạo bài kiểm tra.");
+    } finally {
+      setGeneratingTest(false);
+    }
+  };
+
   const runQuickAction = async (action) => {
-    if (loading || generatingFlashcards) return;
+    if (loading || generatingFlashcards || generatingQuiz || generatingTest) return;
     if (!selectedDocumentIds.length) {
       showToast("error", "Vui lòng chọn ít nhất một tài liệu để sử dụng tính năng này.");
       return;
@@ -905,6 +1186,14 @@ export default function ResearchPage() {
     }
     if (action.special === "flashcards") {
       await handleGenerateFlashcards();
+      return;
+    }
+    if (action.special === "quiz") {
+      await handleGenerateQuiz();
+      return;
+    }
+    if (action.special === "test") {
+      await handleGenerateTest();
       return;
     }
     const prompt = action.prompt;
@@ -952,7 +1241,7 @@ export default function ResearchPage() {
       const fileNames = selectedDocuments.length ? selectedDocuments.map((doc) => doc.filename).join(", ") : "tài liệu đã chọn";
       const payload = {
         title: `Flashcards từ ${fileNames}`.slice(0, 180),
-        content: JSON.stringify({ flashcards: cards }, null, 2),
+        content: buildFlashcardMarkdown(cards),
         note_type: "flashcards",
         metadata: { flashcards: cards },
         citations: [],
@@ -966,6 +1255,33 @@ export default function ResearchPage() {
       showToast("error", err.message || "Không thể lưu flashcards.");
     } finally {
       setSavingFlashcards(false);
+    }
+  };
+
+
+  const handleSaveQuizToNotes = async () => {
+    const mode = quizModal?.mode || "quiz";
+    const quiz = quizModal?.quiz;
+    const questions = quiz?.questions || [];
+    if (!questions.length || savingQuiz) return;
+    setSavingQuiz(true);
+    try {
+      const payload = {
+        title: mode === "test" ? (quiz.title || "Bài kiểm tra từ tài liệu đã chọn") : "Bộ câu hỏi trắc nghiệm",
+        content: buildQuizMarkdown(quiz, mode === "test" ? (quiz.title || "Bài kiểm tra từ tài liệu đã chọn") : "Bộ câu hỏi trắc nghiệm"),
+        note_type: mode === "test" ? "test" : "quiz",
+        metadata: mode === "test" ? { test: quiz } : { quiz },
+        citations: [],
+      };
+      const result = await api.createWorkspaceNote(notebookId, payload, token);
+      const createdNote = result?.note;
+      if (!createdNote) throw new Error("Không thể tạo ghi chú");
+      setNotes((prev) => [createdNote, ...prev]);
+      showToast("success", mode === "test" ? "Đã lưu bài kiểm tra vào ghi chú." : "Đã lưu quiz vào ghi chú.");
+    } catch (err) {
+      showToast("error", err.message || "Không thể lưu quiz/test.");
+    } finally {
+      setSavingQuiz(false);
     }
   };
 
@@ -1108,6 +1424,16 @@ export default function ResearchPage() {
   };
 
   const handleOpenNote = (note) => {
+    const test = getTestFromNote(note);
+    if (test?.questions?.length) {
+      setQuizModal({ mode: "test", title: note.title || test.title || "Bài kiểm tra", quiz: test, canSave: false });
+      return;
+    }
+    const quiz = getQuizFromNote(note);
+    if (quiz?.questions?.length) {
+      setQuizModal({ mode: "quiz", title: note.title || quiz.title || "Bộ câu hỏi trắc nghiệm", quiz, canSave: false });
+      return;
+    }
     const cards = getFlashcardsFromNote(note);
     if (cards.length) {
       setFlashcardModal({ title: note.title || "Flashcards", flashcards: cards, canSave: false });
@@ -1376,6 +1702,39 @@ export default function ResearchPage() {
         .rp-citation-detail-meta span { font-size: 11px; color: #c4a464; border: 1px solid rgba(196,164,100,0.18); border-radius: 99px; padding: 2px 7px; background: rgba(196,164,100,0.08); }
         .rp-citation-detail p { color: #8a8070; font-size: 12px; line-height: 1.6; margin: 0; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
 
+
+        .rp-action-wrap { display: grid; gap: 7px; min-width: 0; }
+        .rp-action-subnote { color: #6a6050; font-size: 11px; line-height: 1.4; padding: 0 2px 4px; }
+        .rp-quick-config { border: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.025); border-radius: 10px; padding: 9px; display: grid; gap: 8px; min-width: 0; }
+        .rp-quick-config label { display: grid; gap: 6px; color: #8a8070; font-size: 11px; }
+        .rp-quick-config select { width: 100%; border: 1px solid rgba(255,255,255,0.09); border-radius: 8px; background: #15120d; color: #d4cfc8; padding: 7px 8px; font-family: 'DM Sans', sans-serif; }
+        .rp-quick-config-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #8a8070; font-size: 12px; }
+        .rp-quick-config-row strong { color: #c4a464; }
+        .rp-quick-config input[type="range"] { width: 100%; accent-color: #c4a464; }
+        .rp-quick-config small { color: #6a6050; font-size: 11px; line-height: 1.4; }
+
+        .rp-quiz-modal { width: min(760px, 100%); max-height: 90vh; overflow-y: auto; background: #1a1710; border: 1px solid rgba(255,255,255,0.1); border-radius: 18px; padding: 22px; box-shadow: 0 24px 80px rgba(0,0,0,0.45); }
+        .rp-quiz-progress { color: #c4a464; font-size: 12px; margin-bottom: 10px; }
+        .rp-quiz-question { color: #e8e0d0; font-family: 'Lora', Georgia, serif; font-size: 18px; line-height: 1.55; margin-bottom: 14px; }
+        .rp-quiz-choices { display: grid; gap: 10px; }
+        .rp-quiz-choice { width: 100%; display: flex; gap: 10px; text-align: left; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.035); color: #d4cfc8; border-radius: 12px; padding: 11px 12px; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+        .rp-quiz-choice strong { color: #c4a464; flex-shrink: 0; }
+        .rp-quiz-choice.selected { border-color: rgba(196,164,100,0.42); background: rgba(196,164,100,0.10); }
+        .rp-quiz-choice.correct { border-color: rgba(80,180,120,0.42); background: rgba(80,180,120,0.11); }
+        .rp-quiz-choice.wrong { border-color: rgba(224,120,120,0.42); background: rgba(224,120,120,0.10); }
+        .rp-quiz-input { width: 100%; border: 1px solid rgba(255,255,255,0.09); border-radius: 12px; background: rgba(15,13,10,0.55); color: #d4cfc8; padding: 11px 12px; font-family: 'DM Sans', sans-serif; font-size: 14px; outline: none; }
+        .rp-quiz-input.textarea { resize: vertical; line-height: 1.6; }
+        .rp-quiz-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+        .rp-quiz-feedback { margin-top: 14px; border: 1px solid rgba(196,164,100,0.16); background: rgba(196,164,100,0.06); border-radius: 13px; padding: 12px; color: #b8ad9c; font-size: 13px; line-height: 1.6; }
+        .rp-quiz-feedback strong.ok { color: #78c878; }
+        .rp-quiz-feedback strong.bad { color: #e07878; }
+        .rp-quiz-feedback p { margin: 6px 0; }
+        .rp-quiz-feedback ul { margin: 8px 0 0 18px; }
+        .rp-quiz-explanation { display: block; color: #9a8160; font-size: 12px; line-height: 1.55; margin-top: 8px; }
+        .rp-choice-explanations { display: grid; gap: 4px; margin-top: 10px; }
+        .rp-choice-explanations small { color: #7f7668; font-size: 11.5px; line-height: 1.45; }
+        .rp-flashcard-footer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
         @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
       `}</style>
@@ -1393,8 +1752,14 @@ export default function ResearchPage() {
           <QuickActionsSidebar
             actions={QUICK_ACTIONS}
             selectedDocumentIds={selectedDocumentIds}
-            loading={loading || generatingFlashcards}
+            loading={loading || generatingFlashcards || generatingQuiz || generatingTest}
             onAction={runQuickAction}
+            flashcardCount={flashcardCount}
+            onFlashcardCountChange={setFlashcardCount}
+            quizCount={quizCount}
+            onQuizCountChange={setQuizCount}
+            quizType={quizType}
+            onQuizTypeChange={setQuizType}
           />
           <div className="rp-chat-col">
             <div className="rp-messages">
@@ -1539,6 +1904,22 @@ export default function ResearchPage() {
           onClose={() => setFlashcardModal(null)}
           onSave={flashcardModal.canSave ? handleSaveFlashcardsToNotes : null}
           saving={savingFlashcards}
+          onGenerateMore={flashcardModal.canSave ? handleGenerateMoreFlashcards : null}
+          generatingMore={generatingFlashcards}
+        />
+      )}
+
+      {quizModal && (
+        <QuizModal
+          mode={quizModal.mode}
+          title={quizModal.title}
+          quiz={quizModal.quiz}
+          warning={quizModal.warning}
+          onClose={() => setQuizModal(null)}
+          onSave={quizModal.canSave ? handleSaveQuizToNotes : null}
+          saving={savingQuiz}
+          onGenerateMore={quizModal.canSave && quizModal.mode !== "test" ? () => handleGenerateQuiz(5 - (quizModal.quiz?.questions?.length || 0)) : null}
+          generatingMore={generatingQuiz}
         />
       )}
 

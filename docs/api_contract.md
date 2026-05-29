@@ -515,7 +515,7 @@ Notes thuộc một workspace hiện được map với `notebook_id`. User ch�
         "content": "Transformer sử dụng...",
         "citations": [],
         "source_message_id": "assistant-message-id",
-        "note_type": "note",
+        "note_type": "text",
         "metadata": {},
         "created_at": "2024-01-15T10:30:00Z",
         "updated_at": "2024-01-15T10:35:00Z"
@@ -537,7 +537,7 @@ Notes thuộc một workspace hiện được map với `notebook_id`. User ch�
   "content": "Transformer sử dụng...",
   "citations": [],
   "source_message_id": "assistant-message-id",
-  "note_type": "note",
+  "note_type": "text",
   "metadata": {}
 }
 ```
@@ -698,3 +698,62 @@ interface ChatMessage {
 | `chat_history` length | Tối đa 20 messages (10 turns) |
 | Top-k chunks retrieval | 5 chunks |
 | Min similarity threshold | 0.5 (cosine) |
+### F2. Tạo quiz nhanh bằng RAG
+
+**`POST /api/research-sessions/{session_id}/quizzes/generate`**
+
+Request:
+```json
+{
+  "selected_document_ids": ["doc_a", "doc_b"],
+  "count": 3,
+  "question_type": "mixed"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "quiz": {
+      "id": "quiz-session-id",
+      "title": "Bộ câu hỏi trắc nghiệm",
+      "questions": []
+    },
+    "questions": [],
+    "warning": null
+  }
+}
+```
+
+`count` chỉ nhận 1–5. `question_type` nhận `mixed`, `multiple_choice`, hoặc `true_false`. Backend dùng RAG trên selected documents của research session.
+
+### F3. Tạo bài kiểm tra 10 câu bằng RAG
+
+**`POST /api/research-sessions/{session_id}/tests/generate`**
+
+Request:
+```json
+{
+  "selected_document_ids": ["doc_a", "doc_b"],
+  "count": 10
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "test": {
+      "id": "rag-test-10",
+      "title": "Bài kiểm tra từ tài liệu đã chọn",
+      "questions": []
+    },
+    "warning": null
+  }
+}
+```
+
+Endpoint này chỉ nhận đúng `count = 10` và tạo phối hợp `multiple_choice`, `true_false`, `fill_blank`, `essay` từ RAG context.
