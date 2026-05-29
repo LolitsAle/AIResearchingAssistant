@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { BookOpen, Library, ChevronLeft, LogOut, Sparkles } from 'lucide-react';
+import { BookOpen, Library, ChevronLeft, LogOut, Sparkles, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 
@@ -127,6 +127,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
   const navigate = useNavigate();
   const email = user?.email || 'researcher@local';
   const initial = email.trim().charAt(0).toUpperCase();
+  const navItems = user?.role === 'admin' ? [...NAV_ITEMS, { to: '/admin', icon: ShieldCheck, label: 'Quản trị', description: 'Import và quản lý tài liệu Thư viện Hệ thống.' }] : NAV_ITEMS;
 
 
   const handleLogout = async () => {
@@ -151,7 +152,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
 
       <div className="left-sidebar__section-label">Chế độ làm việc</div>
       <nav className="left-sidebar__nav" aria-label="Điều hướng chế độ nghiên cứu">
-        {NAV_ITEMS.map(({ to, icon: Icon, label, description }) => (
+        {navItems.map(({ to, icon: Icon, label, description }) => (
           <NavLink
             key={to}
             to={to}
@@ -175,7 +176,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
         <div className="left-sidebar__avatar">{initial}</div>
         <div className="left-sidebar__user-meta">
           <strong>{email}</strong>
-          <span>Gói Free · nâng cấp khi cần</span>
+          <span>{user?.role === 'admin' ? 'Admin' : 'User'}</span>
         </div>
       </div>
       <button type="button" className="left-sidebar__logout" onClick={handleLogout}>

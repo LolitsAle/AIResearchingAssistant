@@ -7,11 +7,20 @@ import ResearchPage from './pages/ResearchPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import SystemLibraryPage from './pages/SystemLibraryPage';
+import AdminPage from './pages/AdminPage';
 
 const ProtectedRoute = ({ children }) => {
   const { token, isReady } = useAuth();
   if (!isReady && !token) return <Navigate to="/login" replace />;
   if (isReady && !token) return <Navigate to="/login" replace />;
+  return children;
+};
+
+const AdminRoute = ({ children }) => {
+  const { token, user, isReady } = useAuth();
+  if (!isReady && !token) return <Navigate to="/login" replace />;
+  if (isReady && !token) return <Navigate to="/login" replace />;
+  if (user?.role !== 'admin') return <Navigate to="/" replace />;
   return children;
 };
 
@@ -36,6 +45,7 @@ export default function App() {
             <Route path="/notebooks/:notebookId" element={<NotebookPage />} />
             <Route path="/research/:notebookId" element={<ResearchPage />} />
             <Route path="/system-library" element={<SystemLibraryPage />} />
+            <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" />} />

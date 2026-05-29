@@ -1,10 +1,4 @@
-"""System Library service.
-
-This module keeps the admin/dev managed document library separate from the
-existing user-uploaded Notebook flow. It reads `system_documents`, optional
-`system_document_chunks`, and per-user `system_document_bookmarks` from
-Supabase. Text queries use library metadata as a safe fallback without returning any hardcoded documents; the API contract is ready for a pgvector RPC backed by `system_document_chunks`.
-"""
+"""System Library service for admin-managed RAG-ready documents."""
 
 from __future__ import annotations
 
@@ -12,6 +6,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
+from uuid import UUID
 
 from fastapi import HTTPException, status
 
@@ -20,16 +15,14 @@ from app.db.supabase_client import supabase
 from app.services.chunker import chunk_text
 from app.services.document_parser import EmptyDocumentText, UnsupportedDocumentType, parse_document
 from app.services.embedder import embed_chunks, embed_query
+from app.services.llm import generate_system_document_metadata
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_DOCUMENT_COLUMNS = (
-    "id, title, filename, file_type, description, ai_summary, page_count, "
-    "word_count, difficulty_level, subject_area, tags, access_level, "
-    "is_vector_ready, created_at, updated_at"
+    "id, title, filename, file_type, storage_path, download_url, category, tags, "
+    "summary, page_count, word_count, is_vector_ready, created_by, created_at, updated_at"
 )
-
-PLAN_RANK = {"free": 0, "pro": 1, "vip": 2}
 
 
 def _supabase_response_data(resp: Any):
@@ -50,15 +43,13 @@ def _get_user_id(user: dict) -> str:
     return str(user_id)
 
 
-def get_user_plan(user: dict) -> str:
-    """Return subscription plan; placeholder defaults to Free until billing exists."""
-    plan = str(user.get("plan") or user.get("subscription_plan") or "free").lower()
-    return plan if plan in PLAN_RANK else "free"
-
-
-def user_can_access(document: dict, user_plan: str) -> bool:
-    required = str(document.get("access_level") or "free").lower()
-    return PLAN_RANK.get(user_plan, 0) >= PLAN_RANK.get(required, 0)
+def _valid_uuid_or_none(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError):
+        return None
 
 
 def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dict:
@@ -74,40 +65,39 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
 
     tags = row.get("tags") or []
     if isinstance(tags, str):
-        tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        tags = [tag.strip().lstrip("#") for tag in tags.split(",") if tag.strip()]
+
+    category = row.get("category") or row.get("subject_area") or "Khác"
+    summary = row.get("summary") or row.get("ai_summary") or row.get("description") or ""
 
     return {
         "id": str(row.get("id")),
         "title": row.get("title") or row.get("filename") or "Tài liệu hệ thống",
         "filename": row.get("filename") or "",
-        "description": row.get("description") or "",
-        "ai_summary": row.get("ai_summary") or "",
+        "file_type": row.get("file_type") or "FILE",
+        "storage_path": row.get("storage_path"),
+        "download_url": row.get("download_url"),
+        "category": category,
+        "subject_area": category,
+        "tags": tags,
+        "summary": summary,
+        "ai_summary": summary,
         "page_count": row.get("page_count"),
         "word_count": row.get("word_count"),
-        "difficulty_level": row.get("difficulty_level") or "intermediate",
-        "subject_area": row.get("subject_area") or "Khác",
-        "tags": tags,
-        "file_type": row.get("file_type") or "PDF",
-        "access_level": str(row.get("access_level") or "free").lower(),
         "is_new": bool(row.get("is_new", is_new)),
         "is_vector_ready": bool(row.get("is_vector_ready", False)),
         "updated_at": row.get("updated_at"),
         "created_at": row.get("created_at"),
+        "created_by": row.get("created_by"),
         "bookmarked_by_current_user": str(row.get("id")) in bookmarked_ids or bool(row.get("bookmarked_by_current_user", False)),
+        "is_bookmarked": str(row.get("id")) in bookmarked_ids or bool(row.get("bookmarked_by_current_user", False)),
         "semantic_score": row.get("similarity") or row.get("score"),
     }
 
 
-
-def verify_system_library_admin(admin_email: str, admin_password: str) -> None:
-    """Validate the simple admin upload account configured in environment."""
-    expected_email = (settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin").strip()
-    expected_password = settings.SYSTEM_LIBRARY_ADMIN_PASSWORD or "admin"
-    if admin_email.strip() != expected_email or admin_password != expected_password:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "ADMIN_FORBIDDEN", "message": "Tài khoản admin hoặc mật khẩu admin không đúng"},
-        )
+def require_admin(user: dict) -> None:
+    if str(user.get("role") or "user").lower() != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "ADMIN_FORBIDDEN", "message": "Chỉ admin mới được truy cập chức năng này"})
 
 
 def _format_system_file_type(file_type: str) -> str:
@@ -117,7 +107,7 @@ def _format_system_file_type(file_type: str) -> str:
     if normalized == "docx":
         return "DOCX"
     if normalized in {"txt", "md"}:
-        return "TXT/MD"
+        return normalized.upper()
     return normalized.upper() or "FILE"
 
 
@@ -125,8 +115,13 @@ def _parse_tags(raw_tags: str | list[str] | None) -> list[str]:
     if isinstance(raw_tags, list):
         source = raw_tags
     else:
-        source = str(raw_tags or "").replace("#", "").split(",")
-    return [tag.strip().replace(" ", "_") for tag in source if tag and tag.strip()]
+        source = str(raw_tags or "").split(",")
+    cleaned: list[str] = []
+    for tag in source:
+        value = str(tag or "").strip().lstrip("#")
+        if value and value not in cleaned:
+            cleaned.append(value)
+    return cleaned
 
 
 def _estimate_word_count(pages: list[dict]) -> int:
@@ -134,32 +129,46 @@ def _estimate_word_count(pages: list[dict]) -> int:
     return len([word for word in text.split() if word.strip()])
 
 
+def _metadata_sample(pages: list[dict], chunks: list[dict]) -> str:
+    first_pages = "\n\n".join(str(page.get("content") or "") for page in pages[:2])
+    sampled_chunks = "\n\n".join(str(chunk.get("content") or "") for chunk in chunks[:4])
+    return (first_pages + "\n\n" + sampled_chunks).strip()[:12000]
+
+
+async def _auto_metadata(pages: list[dict], chunks: list[dict], category_override: str | None, tags_override: str | list[str] | None) -> dict:
+    fallback = {
+        "category": (category_override or "Khác").strip() or "Khác",
+        "tags": _parse_tags(tags_override),
+        "summary": "",
+    }
+    try:
+        generated = await generate_system_document_metadata(_metadata_sample(pages, chunks))
+    except Exception as exc:  # metadata failure should not fail the import
+        logger.warning("System document AI metadata generation failed: %s", exc)
+        generated = {}
+
+    category = (category_override or generated.get("category") or fallback["category"] or "Khác").strip()
+    tags = _parse_tags(tags_override) or _parse_tags(generated.get("tags"))
+    summary = str(generated.get("summary") or "").strip()
+    return {"category": category or "Khác", "tags": tags, "summary": summary}
+
+
 async def import_system_document_from_upload(
     *,
     file_contents: bytes,
     filename: str,
+    created_by: str | None = None,
     title: str | None = None,
-    description: str | None = None,
-    ai_summary: str | None = None,
-    difficulty_level: str = "intermediate",
-    subject_area: str = "Khác",
+    category: str | None = None,
     tags: str | list[str] | None = None,
-    access_level: str = "free",
 ) -> dict:
-    """Parse, chunk, embed, and persist an admin-uploaded System Library document."""
+    """Parse, chunk, embed, auto-catalog, and persist an admin-uploaded System Library document."""
     max_size_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
     if len(file_contents) > max_size_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail={"code": "FILE_TOO_LARGE", "message": f"File quá lớn. Vui lòng chọn file dưới {settings.MAX_UPLOAD_MB}MB."},
         )
-
-    access = str(access_level or "free").lower()
-    if access not in {"free", "pro", "vip"}:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_ACCESS_LEVEL", "message": "access_level phải là free, pro hoặc vip"})
-    difficulty = str(difficulty_level or "intermediate").lower()
-    if difficulty not in {"basic", "intermediate", "advanced"}:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_DIFFICULTY", "message": "difficulty_level phải là basic, intermediate hoặc advanced"})
 
     try:
         pages, parsed_file_type = await parse_document(file_contents, filename)
@@ -175,18 +184,17 @@ async def import_system_document_from_upload(
     if not chunks:
         raise HTTPException(status_code=400, detail={"code": "PARSE_FAILED", "message": "Không tạo được chunk nội dung từ file này"})
 
+    metadata = await _auto_metadata(pages, chunks, category, tags)
     document_payload = {
         "title": (title or filename).strip(),
         "filename": filename,
         "file_type": _format_system_file_type(parsed_file_type),
-        "description": (description or "").strip(),
-        "ai_summary": (ai_summary or description or "").strip(),
+        "category": metadata["category"],
+        "tags": metadata["tags"],
+        "summary": metadata["summary"],
         "page_count": len(pages),
         "word_count": _estimate_word_count(pages),
-        "difficulty_level": difficulty,
-        "subject_area": (subject_area or "Khác").strip(),
-        "tags": _parse_tags(tags),
-        "access_level": access,
+        "created_by": _valid_uuid_or_none(created_by),
         "is_vector_ready": False,
     }
 
@@ -229,6 +237,7 @@ async def import_system_document_from_upload(
 
     return normalize_document(source)
 
+
 def _query_bookmarked_ids(user_id: str) -> set[str]:
     try:
         resp = supabase.table("system_document_bookmarks").select("document_id").eq("user_id", user_id).execute()
@@ -248,20 +257,14 @@ def _query_bookmarked_ids(user_id: str) -> set[str]:
 def _apply_filters(query: Any, filters: dict) -> Any:
     categories = filters.get("categories") or []
     file_types = filters.get("file_types") or []
-    access_levels = filters.get("access_levels") or []
     vector_status = filters.get("vector_status") or []
     tags = filters.get("tags") or []
     updated_ranges = filters.get("updated_ranges") or []
 
     if categories:
-        query = query.in_("subject_area", categories)
+        query = query.in_("category", categories)
     if file_types:
-        normalized_types = ["TXT" if item == "TXT/MD" else item for item in file_types]
-        if "TXT/MD" in file_types:
-            normalized_types.extend(["MD", "TXT/MD"])
-        query = query.in_("file_type", normalized_types)
-    if access_levels:
-        query = query.in_("access_level", [str(item).lower() for item in access_levels])
+        query = query.in_("file_type", file_types)
     if len(vector_status) == 1:
         query = query.eq("is_vector_ready", vector_status[0] == "ready")
     if tags:
@@ -277,9 +280,7 @@ def _apply_filters(query: Any, filters: dict) -> Any:
     return query
 
 
-
 async def _semantic_ranked_rows(query_text: str, candidate_rows: list[dict]) -> list[dict] | None:
-    """Try pgvector semantic ranking via Supabase RPC, or return None for fallback."""
     if not query_text.strip() or not candidate_rows:
         return candidate_rows
 
@@ -313,13 +314,14 @@ async def _semantic_ranked_rows(query_text: str, candidate_rows: list[dict]) -> 
             seen.add(doc_id)
     return ranked_rows
 
+
 def _metadata_matches(row: dict, terms: list[str]) -> bool:
     if not terms:
         return True
     haystack = " ".join(
         str(value or "")
         for value in [
-            row.get("title"), row.get("filename"), row.get("description"), row.get("ai_summary"), row.get("subject_area"), " ".join(row.get("tags") or []),
+            row.get("title"), row.get("filename"), row.get("summary"), row.get("category"), " ".join(row.get("tags") or []),
         ]
     ).lower()
     return all(term in haystack for term in terms)
@@ -365,6 +367,35 @@ async def list_or_search_documents(user: dict, query_text: str = "", filters: di
     return {"documents": documents, "total": len(documents)}
 
 
+def list_admin_documents() -> dict:
+    try:
+        resp = supabase.table("system_documents").select(SYSTEM_DOCUMENT_COLUMNS).order("created_at", desc=True).limit(200).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc):
+            return {"documents": [], "total": 0}
+        logger.exception("Admin list system documents failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải tài liệu hệ thống"}) from exc
+    rows, error = _supabase_response_data(resp)
+    if error:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải tài liệu hệ thống"})
+    documents = [normalize_document(row) for row in rows or []]
+    return {"documents": documents, "total": len(documents)}
+
+
+def delete_system_document(document_id: str) -> dict:
+    try:
+        resp = supabase.table("system_documents").delete().eq("id", document_id).execute()
+    except Exception as exc:
+        logger.exception("Delete system document failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể xoá tài liệu hệ thống"}) from exc
+    rows, error = _supabase_response_data(resp)
+    if error:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể xoá tài liệu hệ thống"})
+    if not rows:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu hệ thống"})
+    return {"document_id": document_id, "deleted": True}
+
+
 def get_documents_by_ids(document_ids: Iterable[str]) -> list[dict]:
     ids = [str(doc_id) for doc_id in document_ids if doc_id]
     if not ids:
@@ -378,19 +409,6 @@ def get_documents_by_ids(document_ids: Iterable[str]) -> list[dict]:
     if error:
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải tài liệu hệ thống"})
     return [normalize_document(row) for row in rows or []]
-
-
-def validate_system_documents_for_chat(document_ids: list[str], user: dict) -> list[dict]:
-    docs = get_documents_by_ids(document_ids)
-    if len(docs) != len(set(document_ids)):
-        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy một hoặc nhiều tài liệu hệ thống"})
-    user_plan = get_user_plan(user)
-    for doc in docs:
-        if not doc.get("is_vector_ready"):
-            raise HTTPException(status_code=409, detail={"code": "VECTOR_NOT_READY", "message": "Tài liệu chưa sẵn sàng cho AI"})
-        if not user_can_access(doc, user_plan):
-            raise HTTPException(status_code=403, detail={"code": "PLAN_REQUIRED", "message": "Tài liệu này yêu cầu gói Pro/VIP"})
-    return docs
 
 
 def add_bookmark(document_id: str, user: dict) -> dict:
