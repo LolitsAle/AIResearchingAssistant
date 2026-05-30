@@ -7,6 +7,50 @@ const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const axiosInstance = axios.create({ baseURL: BASE_URL });
 
+export const REQUEST_TIMEOUTS = {
+  session: 15000,
+  chat: 60000,
+};
+
+const TIMEOUT_MESSAGE = "Máy chủ phản hồi quá lâu. Vui lòng thử lại sau.";
+
+function timeoutConfig(timeoutMs, options = {}) {
+  return {
+    timeout: timeoutMs,
+    signal: options.signal,
+  };
+}
+
+export async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUTS.session) {
+  const controller = new AbortController();
+  let didTimeout = false;
+  const timeoutId = globalThis.setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const abortFromCaller = () => controller.abort();
+  if (options.signal) {
+    if (options.signal.aborted) controller.abort();
+    else options.signal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (didTimeout && error?.name === "AbortError") {
+      throw new Error(TIMEOUT_MESSAGE);
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+    options.signal?.removeEventListener?.("abort", abortFromCaller);
+  }
+}
+
 
 function dataUrlToFile(dataUrl, filename = "academic-lens-crop.png") {
   const [header, base64 = ""] = String(dataUrl || "").split(",");
@@ -18,8 +62,15 @@ function dataUrlToFile(dataUrl, filename = "academic-lens-crop.png") {
 }
 
 function normalizeError(err) {
+  if (err?.code === "ECONNABORTED" || err?.message === TIMEOUT_MESSAGE || /timeout/i.test(err?.message || "")) {
+    const error = new Error(TIMEOUT_MESSAGE);
+    error.name = "TimeoutError";
+    error.code = "REQUEST_TIMEOUT";
+    return error;
+  }
+
   if (axios.isCancel?.(err) || err?.name === "AbortError" || err?.code === "ERR_CANCELED") {
-    const error = new Error("Request aborted");
+    const error = new Error(err?.message === TIMEOUT_MESSAGE ? TIMEOUT_MESSAGE : "Request aborted");
     error.name = "AbortError";
     error.code = "ABORT_ERR";
     return error;
@@ -197,9 +248,13 @@ export const api = {
     ),
 
   // ── NOTES ────────────────────────────────────────────────────────────────
-  getWorkspaceNotes: (workspaceId, token, params = {}) =>
+  getWorkspaceNotes: (workspaceId, token, params = {}, options = {}) =>
     unwrapRequest(() =>
-      axiosInstance.get(`/api/workspaces/${workspaceId}/notes`, { params, headers: authHeader(token) })
+      axiosInstance.get(`/api/workspaces/${workspaceId}/notes`, {
+        params,
+        headers: authHeader(token),
+        ...timeoutConfig(REQUEST_TIMEOUTS.session, options),
+      })
     ),
 
   getResearchSessionNotes: (sessionId, token) =>
@@ -223,9 +278,12 @@ export const api = {
     ),
 
   // ── RESEARCH SESSIONS ───────────────────────────────────────────────────────
-  getResearchSessions: (workspaceId, token) =>
+  getResearchSessions: (workspaceId, token, options = {}) =>
     unwrapRequest(() =>
-      axiosInstance.get(`/api/workspaces/${workspaceId}/research-sessions`, { headers: authHeader(token) })
+      axiosInstance.get(`/api/workspaces/${workspaceId}/research-sessions`, {
+        headers: authHeader(token),
+        ...timeoutConfig(REQUEST_TIMEOUTS.session, options),
+      })
     ),
 
   createResearchSession: (workspaceId, selectedDocumentIds, token) =>
@@ -247,9 +305,12 @@ export const api = {
       axiosInstance.delete(`/api/research-sessions/${sessionId}`, { headers: authHeader(token) })
     ),
 
-  getResearchSessionMessages: (sessionId, token) =>
+  getResearchSessionMessages: (sessionId, token, options = {}) =>
     unwrapRequest(() =>
-      axiosInstance.get(`/api/research-sessions/${sessionId}/messages`, { headers: authHeader(token) })
+      axiosInstance.get(`/api/research-sessions/${sessionId}/messages`, {
+        headers: authHeader(token),
+        ...timeoutConfig(REQUEST_TIMEOUTS.session, options),
+      })
     ),
 
   clearResearchSessionMessages: (sessionId, token) =>
@@ -471,7 +532,7 @@ export const api = {
 
   streamResearchQuery: async ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, callbacks = {}, options = {}) => {
     try {
-      const response = await fetch(`${BASE_URL}/api/chat/ask/stream`, {
+      const response = await fetchWithTimeout(`${BASE_URL}/api/chat/ask/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -485,7 +546,7 @@ export const api = {
           research_session_id: researchSessionId,
         }),
         signal: options.signal,
-      });
+      }, options.timeoutMs || REQUEST_TIMEOUTS.chat);
 
       if (!response.ok) {
         let message = "Stream request failed";
