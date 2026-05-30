@@ -195,8 +195,17 @@ export const api = {
   loginWithGoogle: (credential) =>
     unwrapRequest(() => axiosInstance.post("/api/auth/google", { credential })),
 
+  requestPasswordResetOtp: (email) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/request", { email })),
+
+  verifyPasswordResetOtp: (email, otp) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/verify", { email, otp })),
+
+  confirmPasswordResetWithOtp: (email, otp, newPassword) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/confirm", { email, otp, new_password: newPassword })),
+
   requestPasswordReset: (email) =>
-    unwrapRequest(() => axiosInstance.post("/api/auth/request-password-reset", { email })),
+    unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/request", { email })),
 
   getProfile: (token) =>
     unwrapRequest(() => axiosInstance.get("/api/profile/me", { headers: authHeader(token) })),

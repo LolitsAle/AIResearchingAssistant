@@ -57,6 +57,7 @@ def _safe_profile(row: dict | None, user: dict) -> dict:
         "preferred_theme": row.get("preferred_theme") or "system",
         "preferred_language": row.get("preferred_language") or "vi",
         "has_password": bool(row.get("password_login_enabled", False)),
+        "default_password_must_change": bool(row.get("default_password_must_change", False)),
     }
 
 
@@ -94,10 +95,11 @@ def _update_profile(user: dict, updates: dict) -> dict:
             raise RuntimeError(error)
         return rows[0] if rows else _get_profile(user)
     except Exception as exc:
-        if "google_email" in updates or "google_avatar_url" in updates:
+        if "google_email" in updates or "google_avatar_url" in updates or "default_password_must_change" in updates:
             fallback_updates = dict(updates)
             fallback_updates.pop("google_email", None)
             fallback_updates.pop("google_avatar_url", None)
+            fallback_updates.pop("default_password_must_change", None)
             try:
                 resp = supabase.table("profiles").update(fallback_updates).eq("id", _user_id(user)).execute()
                 rows, error = _supabase_response_data(resp)
@@ -174,7 +176,7 @@ async def change_password(payload: ChangePasswordRequest, user: dict = Depends(g
             status_code=400,
             detail={
                 "code": "PASSWORD_NOT_SET",
-                "message": "Tài khoản này chưa có mật khẩu. Vui lòng dùng chức năng đặt mật khẩu mới hoặc reset mật khẩu.",
+                "message": "Tài khoản này chưa có mật khẩu. Vui lòng dùng chức năng đặt lại mật khẩu qua email.",
             },
         )
     if not payload.current_password:
@@ -192,7 +194,7 @@ async def change_password(payload: ChangePasswordRequest, user: dict = Depends(g
         supabase.auth.admin.update_user_by_id(_user_id(user), {"password": payload.new_password})
     except Exception as exc:
         print(f"PASSWORD UPDATE FAILED for user {_user_id(user)}: {exc}")
-        raise HTTPException(status_code=500, detail={"code": "PASSWORD_UPDATE_FAILED", "message": "Không thể cập nhật mật khẩu. Vui lòng thử lại sau."}) from exc
+        raise HTTPException(status_code=400, detail={"code": "PASSWORD_UPDATE_FAILED", "message": "Không thể cập nhật mật khẩu. Vui lòng thử lại sau."}) from exc
     _update_profile(user, {"password_login_enabled": True})
     return {"success": True, "data": {"message": "Đã cập nhật mật khẩu."}}
 

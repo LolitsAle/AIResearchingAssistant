@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = ""
+    APP_ENV: str = "development"
+    ENABLE_DEV_AUTH_BYPASS: bool = False
     AVATAR_STORAGE_BUCKET: str = "avatars"
     CORS_ORIGINS: List[str] = ["http://localhost:5173"]
 
