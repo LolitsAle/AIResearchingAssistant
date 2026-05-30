@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
 from app.services.cross_analysis_service import get_document_preview, resolve_document, upload_temp_document
 from app.services.llm import GROQ_MODEL, client
+from app.services.vision_service import analyze_academic_image, is_vision_configured
 
 router = APIRouter(tags=["academic-lens"])
 
@@ -110,9 +111,36 @@ async def web_chat(body: WebChatRequest, user: dict = Depends(get_current_user))
 
 
 @router.post("/vision-chat", response_model=dict)
-async def vision_chat(body: VisionChatRequest, user: dict = Depends(get_current_user)):
-    _ = (body, user)
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail={"code": "VISION_NOT_CONFIGURED", "message": "Tính năng phân tích ảnh cần cấu hình Vision API."})
+async def vision_chat(
+    image: UploadFile = File(...),
+    prompt: str = Form(...),
+    document_id: str | None = Form(None),
+    user: dict = Depends(get_current_user),
+):
+    _ = (document_id, user)
+    clean_prompt = (prompt or "").strip()
+    if not clean_prompt:
+        raise HTTPException(status_code=400, detail={"code": "MISSING_PROMPT", "message": "Vui lòng nhập prompt để phân tích ảnh."})
+    if not image:
+        raise HTTPException(status_code=400, detail={"code": "MISSING_IMAGE", "message": "Vui lòng gửi ảnh crop để phân tích."})
+    if not is_vision_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"code": "VISION_NOT_CONFIGURED", "message": "Tính năng phân tích ảnh cần cấu hình Vision API. Hãy thêm GOOGLE_API_KEY hoặc cấu hình model vision."})
+
+    mime_type = image.content_type or ""
+    image_bytes = await image.read()
+    try:
+        result = await analyze_academic_image(image_bytes=image_bytes, mime_type=mime_type, prompt=clean_prompt)
+    except ValueError as exc:
+        code = str(exc)
+        if code == "IMAGE_TOO_LARGE":
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"code": code, "message": "Ảnh crop quá lớn. Vui lòng chọn vùng nhỏ hơn hoặc nén ảnh."}) from exc
+        if code == "UNSUPPORTED_IMAGE_TYPE":
+            raise HTTPException(status_code=400, detail={"code": code, "message": "Chỉ hỗ trợ ảnh PNG, JPEG hoặc WEBP."}) from exc
+        raise HTTPException(status_code=400, detail={"code": code, "message": "Ảnh crop không hợp lệ."}) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"code": "VISION_MODEL_FAILED", "message": "Vision model không trả lời được. Vui lòng kiểm tra GOOGLE_API_KEY/VISION_MODEL và quota."}) from exc
+
+    return {"success": True, "data": {"answer": result.answer, "model": result.model, "citations": []}}
 
 
 @router.post("/add-web-context", response_model=dict)

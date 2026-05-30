@@ -7,6 +7,16 @@ const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const axiosInstance = axios.create({ baseURL: BASE_URL });
 
+
+function dataUrlToFile(dataUrl, filename = "academic-lens-crop.png") {
+  const [header, base64 = ""] = String(dataUrl || "").split(",");
+  const mime = header.match(/data:(.*?);base64/)?.[1] || "image/png";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
+}
+
 function normalizeError(err) {
   if (axios.isCancel?.(err) || err?.name === "AbortError" || err?.code === "ERR_CANCELED") {
     const error = new Error("Request aborted");
@@ -415,10 +425,19 @@ export const api = {
       axiosInstance.post("/api/academic-lens/web-chat", payload, { headers: authHeader(token) })
     ),
 
-  visionAcademicLensChat: (payload, token) =>
-    unwrapRequest(() =>
-      axiosInstance.post("/api/academic-lens/vision-chat", payload, { headers: authHeader(token) })
-    ),
+  visionAcademicLensChat: (payload, token) => {
+    const formData = new FormData();
+    if (payload?.image instanceof File || payload?.image instanceof Blob) {
+      formData.append("image", payload.image, payload.image.name || "academic-lens-crop.png");
+    } else if (payload?.image_data_url) {
+      formData.append("image", dataUrlToFile(payload.image_data_url));
+    }
+    formData.append("prompt", payload?.prompt || "");
+    if (payload?.document_id) formData.append("document_id", payload.document_id);
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/academic-lens/vision-chat", formData, { headers: { ...authHeader(token) } })
+    );
+  },
 
   addAcademicLensWebContext: (payload, token) =>
     unwrapRequest(() =>
