@@ -140,7 +140,7 @@ async def generate_answer(
         response = await client.chat.completions.create(
             model=GROQ_MODEL,
             messages=messages,
-            temperature=0.0
+            temperature=0.0,
         )
         return {
             "text": response.choices[0].message.content,
@@ -177,6 +177,7 @@ async def generate_answer_stream(
             model=GROQ_MODEL,
             messages=messages,
             stream=True,
+            temperature=0.0,
         )
         async for chunk in stream:
             token = chunk.choices[0].delta.content
