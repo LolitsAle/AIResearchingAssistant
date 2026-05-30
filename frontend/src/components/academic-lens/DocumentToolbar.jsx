@@ -1,6 +1,6 @@
 import { Camera, FileUp, Library, NotebookTabs } from 'lucide-react';
 
-export default function DocumentToolbar({ title, uploading, onUploadClick, onOpenLibrary, onToggleSnip, onToggleNotepad }) {
+export default function DocumentToolbar({ title, uploading, onUploadClick, onOpenLibrary, onToggleSnip, onScrollToNotepad }) {
   return (
     <div className="al-toolbar">
       <div>
@@ -11,7 +11,7 @@ export default function DocumentToolbar({ title, uploading, onUploadClick, onOpe
         <button type="button" onClick={onUploadClick} disabled={uploading}><FileUp size={16} /> {uploading ? 'Đang tải...' : 'Upload'}</button>
         <button type="button" onClick={onOpenLibrary}><Library size={16} /> Thư viện</button>
         <button type="button" onClick={onToggleSnip}><Camera size={16} /> Chụp ảnh</button>
-        <button type="button" onClick={onToggleNotepad}><NotebookTabs size={16} /> Notepad</button>
+        <button type="button" onClick={onScrollToNotepad}><NotebookTabs size={16} /> Notepad</button>
       </div>
     </div>
   );

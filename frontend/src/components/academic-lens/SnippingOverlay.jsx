@@ -1,38 +1,65 @@
 import { useRef, useState } from 'react';
 
+function rectFromPoints(start, end) {
+  return {
+    left: Math.min(start.x, end.x),
+    top: Math.min(start.y, end.y),
+    width: Math.abs(start.x - end.x),
+    height: Math.abs(start.y - end.y),
+  };
+}
+
+function drawTextCrop(text, selectionRect) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.min(1400, Math.max(360, Math.round(selectionRect.width * window.devicePixelRatio)));
+  canvas.height = Math.min(1000, Math.max(220, Math.round(selectionRect.height * window.devicePixelRatio)));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#15120d';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#efe6d4';
+  ctx.font = '18px Georgia';
+  ctx.fillText('Ảnh dựng từ vùng văn bản đã chọn', 18, 32);
+  ctx.strokeStyle = '#d4b66f';
+  ctx.strokeRect(10, 48, canvas.width - 20, canvas.height - 58);
+  ctx.fillStyle = '#ded4c4';
+  ctx.font = '15px sans-serif';
+  const words = (text || '').replace(/\s+/g, ' ').trim().split(' ');
+  const maxWidth = canvas.width - 40;
+  let line = '';
+  let y = 78;
+  for (const word of words) {
+    const testLine = line ? `${line} ${word}` : word;
+    if (ctx.measureText(testLine).width > maxWidth) {
+      ctx.fillText(line, 20, y);
+      line = word;
+      y += 23;
+      if (y > canvas.height - 22) break;
+    } else {
+      line = testLine;
+    }
+  }
+  if (line && y <= canvas.height - 22) ctx.fillText(line, 20, y);
+  return canvas.toDataURL('image/png');
+}
+
+function captureTextFallback(target, drag) {
+  const textDoc = target?.querySelector?.('.al-text-doc');
+  if (!textDoc) return null;
+  const text = textDoc.innerText || textDoc.textContent || '';
+  if (!text.trim()) return null;
+  return {
+    dataUrl: drawTextCrop(text.slice(0, 3500), drag),
+    warning: 'Trình duyệt không cho phép chụp pixel trực tiếp nếu không dùng thư viện/screen-capture. Ảnh này được dựng từ văn bản thật trong vùng reader; PDF/iframe cần Vision API nhận file ảnh/PDF render từ backend để crop chính xác.',
+  };
+}
+
 export default function SnippingOverlay({ active, targetRef, onCancel, onCapture }) {
   const [drag, setDrag] = useState(null);
   const originRef = useRef(null);
   if (!active) return null;
 
-  const rectFromPoints = (start, end) => ({
-    left: Math.min(start.x, end.x),
-    top: Math.min(start.y, end.y),
-    width: Math.abs(start.x - end.x),
-    height: Math.abs(start.y - end.y),
-  });
-
-  const makeThumbnail = (selectionRect) => {
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(240, Math.round(selectionRect.width));
-    canvas.height = Math.max(140, Math.round(selectionRect.height));
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#15120d';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#d4b66f';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
-    ctx.fillStyle = '#f2d48b';
-    ctx.font = '16px Georgia';
-    ctx.fillText('Vùng nội dung đã chụp', 18, 34);
-    ctx.fillStyle = '#d8cfc0';
-    ctx.font = '13px sans-serif';
-    ctx.fillText(`${Math.round(selectionRect.width)} × ${Math.round(selectionRect.height)} px`, 18, 58);
-    ctx.fillText('Gửi ảnh này đến Vision API để phân tích thật.', 18, 82);
-    return canvas.toDataURL('image/png');
-  };
-
   const handlePointerDown = (event) => {
+    if (event.target.closest('button')) return;
     originRef.current = { x: event.clientX, y: event.clientY };
     setDrag(rectFromPoints(originRef.current, originRef.current));
   };
@@ -46,9 +73,20 @@ export default function SnippingOverlay({ active, targetRef, onCancel, onCapture
       setDrag(null);
       return;
     }
-    const targetBox = targetRef.current?.getBoundingClientRect();
-    const relativeRect = targetBox ? { ...drag, left: drag.left - targetBox.left, top: drag.top - targetBox.top } : drag;
-    onCapture({ dataUrl: makeThumbnail(drag), rect: relativeRect });
+    const target = targetRef.current;
+    const targetBox = target?.getBoundingClientRect();
+    const relativeRect = targetBox ? { ...drag, left: drag.left - targetBox.left + target.scrollLeft, top: drag.top - targetBox.top + target.scrollTop } : drag;
+    const hasPdfFrame = Boolean(target?.querySelector?.('iframe'));
+    if (hasPdfFrame) {
+      onCapture({ rect: relativeRect, error: 'Không thể chụp pixel từ PDF viewer/iframe bằng JavaScript trình duyệt do sandbox/CORS. Hãy cấu hình backend render PDF sang ảnh hoặc upload ảnh trực tiếp cho Vision API.' });
+    } else {
+      const textCapture = captureTextFallback(target, drag);
+      if (textCapture?.dataUrl) {
+        onCapture({ ...textCapture, rect: relativeRect, mimeType: 'image/png' });
+      } else {
+        onCapture({ rect: relativeRect, error: 'Không tìm thấy nội dung ảnh/văn bản có thể chụp trong vùng chọn. Tính năng phân tích ảnh cần nguồn ảnh thật hoặc backend render tài liệu sang ảnh.' });
+      }
+    }
     originRef.current = null;
     setDrag(null);
   };
