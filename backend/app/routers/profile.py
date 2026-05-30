@@ -19,9 +19,6 @@ router = APIRouter(prefix="/api/profile", tags=["profile"])
 
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 ALLOWED_AVATAR_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-DEMO_OTP_CODE = "8888"
-
-
 def _supabase_response_data(resp: Any):
     if isinstance(resp, dict):
         return resp.get("data"), resp.get("error")
@@ -33,7 +30,7 @@ def _user_id(user: dict) -> str:
 
 
 def _profile_select() -> str:
-    return "id,email,role,avatar_url,full_name,display_name,gender,date_of_birth,created_at,google_id,auth_provider,email_2fa_enabled,is_active,preferred_theme,preferred_language,password_login_enabled"
+    return "*"
 
 
 def _safe_profile(row: dict | None, user: dict) -> dict:
@@ -53,6 +50,8 @@ def _safe_profile(row: dict | None, user: dict) -> dict:
         "date_of_birth": row.get("date_of_birth"),
         "created_at": row.get("created_at"),
         "google_connected": bool(row.get("google_id")),
+        "google_email": row.get("google_email") or (email if row.get("google_id") and row.get("auth_provider") == "google" else None),
+        "google_avatar_url": row.get("google_avatar_url") or (row.get("avatar_url") if row.get("google_id") else None),
         "email_2fa_enabled": bool(row.get("email_2fa_enabled", False)),
         "is_active": row.get("is_active", True),
         "preferred_theme": row.get("preferred_theme") or "system",
@@ -95,6 +94,18 @@ def _update_profile(user: dict, updates: dict) -> dict:
             raise RuntimeError(error)
         return rows[0] if rows else _get_profile(user)
     except Exception as exc:
+        if "google_email" in updates or "google_avatar_url" in updates:
+            fallback_updates = dict(updates)
+            fallback_updates.pop("google_email", None)
+            fallback_updates.pop("google_avatar_url", None)
+            try:
+                resp = supabase.table("profiles").update(fallback_updates).eq("id", _user_id(user)).execute()
+                rows, error = _supabase_response_data(resp)
+                if error:
+                    raise RuntimeError(error)
+                return rows[0] if rows else _get_profile(user)
+            except Exception as retry_exc:
+                raise HTTPException(status_code=500, detail={"code": "PROFILE_UPDATE_FAILED", "message": "Không thể cập nhật hồ sơ."}) from retry_exc
         raise HTTPException(status_code=500, detail={"code": "PROFILE_UPDATE_FAILED", "message": "Không thể cập nhật hồ sơ."}) from exc
 
 
@@ -108,7 +119,6 @@ class ProfileUpdateRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str | None = None
     new_password: str = Field(..., min_length=6, max_length=128)
-    otp_code: str | None = Field(default=None, max_length=16)
 
 
 class GoogleCredentialRequest(BaseModel):
@@ -159,20 +169,30 @@ async def upload_avatar(avatar: UploadFile = File(...), user: dict = Depends(get
 @router.post("/change-password")
 async def change_password(payload: ChangePasswordRequest, user: dict = Depends(get_current_user)) -> dict:
     profile = _get_profile(user)
-    if profile.get("password_login_enabled"):
-        if not payload.current_password:
-            raise HTTPException(status_code=400, detail={"code": "CURRENT_PASSWORD_REQUIRED", "message": "Vui lòng nhập mật khẩu hiện tại."})
-        try:
-            supabase.auth.sign_in_with_password({"email": user["email"], "password": payload.current_password})
-        except Exception as exc:
-            raise HTTPException(status_code=401, detail={"code": "INVALID_CURRENT_PASSWORD", "message": "Mật khẩu hiện tại không đúng."}) from exc
-    else:
-        if str(payload.otp_code or "").strip() != DEMO_OTP_CODE:
-            raise HTTPException(status_code=400, detail={"code": "DEMO_OTP_REQUIRED", "message": "Vui lòng nhập mã OTP demo 8888 để đặt mật khẩu cho tài khoản Google."})
+    if not profile.get("password_login_enabled"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "PASSWORD_NOT_SET",
+                "message": "Tài khoản này chưa có mật khẩu. Vui lòng dùng chức năng đặt mật khẩu mới hoặc reset mật khẩu.",
+            },
+        )
+    if not payload.current_password:
+        raise HTTPException(status_code=400, detail={"code": "CURRENT_PASSWORD_REQUIRED", "message": "Vui lòng nhập mật khẩu hiện tại."})
+
+    try:
+        resp = supabase.auth.sign_in_with_password({"email": user["email"], "password": payload.current_password})
+        auth_error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
+        if auth_error:
+            raise ValueError(str(auth_error))
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail={"code": "INVALID_CURRENT_PASSWORD", "message": "Mật khẩu hiện tại không đúng."}) from exc
+
     try:
         supabase.auth.admin.update_user_by_id(_user_id(user), {"password": payload.new_password})
     except Exception as exc:
-        raise HTTPException(status_code=500, detail={"code": "PASSWORD_UPDATE_FAILED", "message": "Không thể cập nhật mật khẩu."}) from exc
+        print(f"PASSWORD UPDATE FAILED for user {_user_id(user)}: {exc}")
+        raise HTTPException(status_code=500, detail={"code": "PASSWORD_UPDATE_FAILED", "message": "Không thể cập nhật mật khẩu. Vui lòng thử lại sau."}) from exc
     _update_profile(user, {"password_login_enabled": True})
     return {"success": True, "data": {"message": "Đã cập nhật mật khẩu."}}
 
@@ -180,7 +200,8 @@ async def change_password(payload: ChangePasswordRequest, user: dict = Depends(g
 @router.post("/2fa/email/enable")
 async def enable_email_2fa(user: dict = Depends(get_current_user)) -> dict:
     profile = _update_profile(user, {"email_2fa_enabled": True})
-    return {"success": True, "data": {"enabled": True, "user": _safe_profile(profile, user), "message": "Đã bật 2FA email. Mã OTP demo là 8888."}}
+    message = "Đã bật 2FA email. Cần cấu hình SMTP để gửi mã xác thực qua email." if not (settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD and settings.SMTP_FROM) else "Đã bật 2FA email."
+    return {"success": True, "data": {"enabled": True, "user": _safe_profile(profile, user), "message": message}}
 
 
 @router.post("/2fa/email/disable")
@@ -192,9 +213,27 @@ async def disable_email_2fa(user: dict = Depends(get_current_user)) -> dict:
 @router.post("/social/google/connect")
 async def connect_google(payload: GoogleCredentialRequest, user: dict = Depends(get_current_user)) -> dict:
     claims = verify_google_credential(payload.credential)
-    if claims.get("email", "").lower() != user.get("email", "").lower():
-        raise HTTPException(status_code=400, detail={"code": "GOOGLE_EMAIL_MISMATCH", "message": "Email Google phải trùng với email tài khoản hiện tại."})
-    profile = _update_profile(user, {"google_id": claims["sub"], "auth_provider": "google", "avatar_url": claims.get("picture")})
+    google_id = claims["sub"]
+    try:
+        resp = supabase.table("profiles").select("id,email,google_id").eq("google_id", google_id).limit(1).execute()
+        rows, error = _supabase_response_data(resp)
+        if error:
+            raise RuntimeError(error)
+        if rows and str(rows[0].get("id")) != _user_id(user):
+            raise HTTPException(status_code=409, detail={"code": "GOOGLE_ALREADY_LINKED", "message": "Tài khoản Google này đã được liên kết với tài khoản khác."})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"code": "GOOGLE_LINK_CHECK_FAILED", "message": "Không thể kiểm tra liên kết Google."}) from exc
+
+    updates = {
+        "google_id": google_id,
+        "google_email": claims.get("email"),
+        "google_avatar_url": claims.get("picture"),
+        "auth_provider": "google",
+        "avatar_url": claims.get("picture"),
+    }
+    profile = _update_profile(user, updates)
     return {"success": True, "data": {"user": _safe_profile(profile, user), "message": "Đã kết nối Google."}}
 
 
@@ -203,7 +242,7 @@ async def disconnect_google(user: dict = Depends(get_current_user)) -> dict:
     profile = _get_profile(user)
     if not profile.get("password_login_enabled"):
         raise HTTPException(status_code=400, detail={"code": "PASSWORD_REQUIRED", "message": "Vui lòng đặt mật khẩu trước khi ngắt kết nối Google."})
-    profile = _update_profile(user, {"google_id": None, "auth_provider": "password"})
+    profile = _update_profile(user, {"google_id": None, "google_email": None, "google_avatar_url": None, "auth_provider": "password"})
     return {"success": True, "data": {"user": _safe_profile(profile, user), "message": "Đã ngắt kết nối Google."}}
 
 
@@ -279,7 +318,7 @@ async def deactivate(user: dict = Depends(get_current_user)) -> dict:
 @router.delete("/account")
 async def delete_account(user: dict = Depends(get_current_user)) -> dict:
     anonymized = f"deleted-{_user_id(user)}@deleted.local"
-    _update_profile(user, {"is_active": False, "email": anonymized, "full_name": None, "display_name": "Deleted user", "avatar_url": None, "google_id": None})
+    _update_profile(user, {"is_active": False, "email": anonymized, "full_name": None, "display_name": "Deleted user", "avatar_url": None, "google_id": None, "google_email": None, "google_avatar_url": None})
     try:
         supabase.auth.admin.update_user_by_id(_user_id(user), {"user_metadata": {"deleted": True}})
     except Exception:

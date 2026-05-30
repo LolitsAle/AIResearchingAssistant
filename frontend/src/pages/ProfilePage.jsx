@@ -170,20 +170,62 @@ function BasicInfo({ profile, token, onUpdate, onSuccess, onError }) {
 }
 
 function Security({ profile, token, onUpdate, onSuccess, onError }) {
-  const [pw, setPw] = useState({ current_password: '', new_password: '', confirm: '', otp_code: '' });
+  const [pw, setPw] = useState({ current_password: '', new_password: '', confirm: '' });
   const [resetEmail, setResetEmail] = useState(profile.email);
-  const changePassword = async (e) => { e.preventDefault(); if (pw.new_password !== pw.confirm) return onError(new Error('Mật khẩu xác nhận không khớp.')); try { const resp = await api.changePassword({ current_password: pw.current_password || null, new_password: pw.new_password, otp_code: pw.otp_code || null }, token); onSuccess(resp.message); setPw({ current_password:'', new_password:'', confirm:'', otp_code:'' }); onUpdate({ ...profile, has_password: true }); } catch (err) { onError(err); } };
+  const canChangePassword = Boolean(profile.has_password);
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    if (!canChangePassword) return onError(new Error('Tài khoản này chưa có mật khẩu. Vui lòng dùng chức năng reset mật khẩu để thiết lập mật khẩu mới.'));
+    if (pw.new_password !== pw.confirm) return onError(new Error('Mật khẩu xác nhận không khớp.'));
+    try {
+      const resp = await api.changePassword({ current_password: pw.current_password || null, new_password: pw.new_password }, token);
+      onSuccess(resp.message);
+      setPw({ current_password: '', new_password: '', confirm: '' });
+      onUpdate({ ...profile, has_password: true });
+    } catch (err) { onError(err); }
+  };
   const reset = async () => { try { const resp = await api.requestPasswordReset(resetEmail); onSuccess(resp.message); } catch (err) { onError(err); } };
   const toggle2fa = async () => { try { const resp = profile.email_2fa_enabled ? await api.disableEmail2fa(token) : await api.enableEmail2fa(token); if (resp.user) onUpdate(resp.user); onSuccess(resp.message); } catch (err) { onError(err); } };
-  return <section className="grid two"><form className="card form" onSubmit={changePassword}><h2>Đổi mật khẩu</h2>{profile.has_password ? <label>Mật khẩu hiện tại<input type="password" value={pw.current_password} onChange={e=>setPw({...pw,current_password:e.target.value})} /></label> : <label>OTP demo cho tài khoản Google<input inputMode="numeric" value={pw.otp_code} onChange={e=>setPw({...pw,otp_code:e.target.value})} placeholder="Nhập 8888" /></label>}<label>Mật khẩu mới<input type="password" minLength={6} value={pw.new_password} onChange={e=>setPw({...pw,new_password:e.target.value})} required /></label><label>Xác nhận mật khẩu mới<input type="password" minLength={6} value={pw.confirm} onChange={e=>setPw({...pw,confirm:e.target.value})} required /></label><button className="primary">Cập nhật mật khẩu</button><p className="muted">Tài khoản đăng nhập bằng mật khẩu chỉ cần nhập đúng mật khẩu hiện tại. Tài khoản chỉ dùng Google có thể đặt mật khẩu bằng OTP demo 8888.</p></form><div className="card form"><h2>Reset mật khẩu & 2FA email</h2><label>Email reset<input value={resetEmail} onChange={e=>setResetEmail(e.target.value)} /></label><button className="secondary" onClick={reset}>Yêu cầu reset mật khẩu</button><div className="divider" /><p>2FA email: <strong>{profile.email_2fa_enabled ? 'Đang bật' : 'Đang tắt'}</strong></p><p className="muted">Môi trường demo dùng mã OTP giả 8888 và luôn xác thực thành công.</p><button className="secondary" onClick={toggle2fa}>{profile.email_2fa_enabled ? 'Tắt 2FA email' : 'Bật 2FA email'}</button></div></section>;
+
+  return (
+    <section className="grid two">
+      <form className="card form" onSubmit={changePassword}>
+        <h2>Đổi mật khẩu</h2>
+        {canChangePassword ? (
+          <label>Mật khẩu hiện tại<input type="password" value={pw.current_password} onChange={e=>setPw({...pw,current_password:e.target.value})} /></label>
+        ) : (
+          <p className="muted">Tài khoản này chưa có mật khẩu. Vui lòng dùng chức năng reset mật khẩu để thiết lập mật khẩu mới qua email đã xác minh.</p>
+        )}
+        <label>Mật khẩu mới<input type="password" minLength={6} value={pw.new_password} onChange={e=>setPw({...pw,new_password:e.target.value})} required disabled={!canChangePassword} /></label>
+        <label>Xác nhận mật khẩu mới<input type="password" minLength={6} value={pw.confirm} onChange={e=>setPw({...pw,confirm:e.target.value})} required disabled={!canChangePassword} /></label>
+        <button className="primary" disabled={!canChangePassword}>Cập nhật mật khẩu</button>
+        <p className="muted">Tài khoản đăng nhập bằng mật khẩu cần nhập đúng mật khẩu hiện tại. Tài khoản chỉ dùng Google cần đặt mật khẩu bằng luồng reset mật khẩu hoặc thiết lập mật khẩu mới qua email.</p>
+      </form>
+      <div className="card form">
+        <h2>Reset mật khẩu & 2FA email</h2>
+        <label>Email reset<input value={resetEmail} onChange={e=>setResetEmail(e.target.value)} /></label>
+        <button className="secondary" onClick={reset}>Yêu cầu reset mật khẩu</button>
+        <div className="divider" />
+        <p>2FA email: <strong>{profile.email_2fa_enabled ? 'Đang bật' : 'Đang tắt'}</strong></p>
+        <p className="muted">Nếu chưa cấu hình SMTP, hệ thống sẽ báo cần cấu hình dịch vụ email để gửi mã xác thực.</p>
+        <button className="secondary" onClick={toggle2fa}>{profile.email_2fa_enabled ? 'Tắt 2FA email' : 'Bật 2FA email'}</button>
+      </div>
+    </section>
+  );
 }
+
 
 function SocialLinks({ profile, token, onUpdate, onSuccess, onError }) {
   const onCredential = async (credential) => { try { const resp = await api.connectGoogle(credential, token); onUpdate(resp.user); onSuccess(resp.message); } catch (err) { onError(err); } };
   const { buttonRef, configured } = useGoogleCredential(onCredential);
   const disconnect = async () => { try { const resp = await api.disconnectGoogle(token); onUpdate(resp.user); onSuccess(resp.message); } catch (err) { onError(err); } };
-  return <section className="card"><h2>Liên kết tài khoản</h2><div className="social-row"><div><strong>Google</strong><p>{profile.google_connected ? 'Đã kết nối' : 'Chưa kết nối'}</p></div>{profile.google_connected ? <button className="danger-soft" onClick={disconnect}>Ngắt kết nối Google</button> : configured ? <div ref={buttonRef} /> : <span className="muted">Cần cấu hình VITE_GOOGLE_CLIENT_ID.</span>}</div><p className="muted">Chỉ cho ngắt Google khi tài khoản còn cách đăng nhập khác bằng mật khẩu.</p></section>;
+  const googleLabel = profile.google_connected
+    ? `Google đã kết nối${profile.google_email ? `: ${profile.google_email}` : ''}`
+    : 'Chưa kết nối';
+  return <section className="card"><h2>Liên kết tài khoản</h2><div className="social-row"><div><strong>Google</strong><p>{googleLabel}</p></div>{profile.google_connected ? <button className="danger-soft" onClick={disconnect}>Ngắt kết nối Google</button> : configured ? <div ref={buttonRef} /> : <span className="muted">Cần cấu hình VITE_GOOGLE_CLIENT_ID.</span>}</div><p className="muted">Có thể liên kết Gmail khác email hồ sơ nếu Google account hợp lệ và chưa được liên kết với tài khoản khác. Chỉ cho ngắt Google khi tài khoản còn cách đăng nhập khác bằng mật khẩu.</p></section>;
 }
+
 
 function Activity({ activity }) {
   const stats = activity?.stats || {};
