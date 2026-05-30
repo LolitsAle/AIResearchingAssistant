@@ -9,6 +9,7 @@ import RegisterPage from './pages/RegisterPage';
 import SystemLibraryPage from './pages/SystemLibraryPage';
 import AdminPage from './pages/AdminPage';
 import CrossAnalysisPage from './pages/CrossAnalysisPage';
+import AcademicLensPage from './pages/AcademicLensPage';
 
 const ProtectedRoute = ({ children }) => {
   const { token, isReady } = useAuth();
@@ -45,8 +46,9 @@ export default function App() {
             <Route path="/notebook" element={<Navigate to="/" replace />} />
             <Route path="/notebooks/:notebookId" element={<NotebookPage />} />
             <Route path="/research/:notebookId" element={<ResearchPage />} />
-            <Route path="/system-library" element={<SystemLibraryPage />} />
+            <Route path="/academic-lens" element={<AcademicLensPage />} />
             <Route path="/cross-analysis" element={<CrossAnalysisPage />} />
+            <Route path="/system-library" element={<SystemLibraryPage />} />
             <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
           </Route>
 
