@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
     SUPABASE_ANON_KEY: str
+    GOOGLE_CLIENT_ID: str = ""
+    JWT_SECRET_KEY: str = ""
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    AVATAR_STORAGE_BUCKET: str = "avatars"
     CORS_ORIGINS: List[str] = ["http://localhost:5173"]
 
     # Chunking

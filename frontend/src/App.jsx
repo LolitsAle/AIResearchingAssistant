@@ -11,6 +11,7 @@ import AdminPage from './pages/AdminPage';
 import CrossAnalysisPage from './pages/CrossAnalysisPage';
 import AcademicLensPage from './pages/AcademicLensPage';
 import HomePage from './pages/HomePage';
+import ProfilePage from './pages/ProfilePage';
 
 const ProtectedRoute = ({ children }) => {
   const { token, isReady } = useAuth();
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="/academic-lens" element={<AcademicLensPage />} />
             <Route path="/cross-analysis" element={<CrossAnalysisPage />} />
             <Route path="/system-library" element={<SystemLibraryPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
             <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
           </Route>
 
