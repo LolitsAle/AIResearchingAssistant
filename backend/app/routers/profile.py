@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/profile", tags=["profile"])
 
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 ALLOWED_AVATAR_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+DEMO_OTP_CODE = "8888"
 
 
 def _supabase_response_data(resp: Any):
@@ -107,6 +108,7 @@ class ProfileUpdateRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str | None = None
     new_password: str = Field(..., min_length=6, max_length=128)
+    otp_code: str | None = Field(default=None, max_length=16)
 
 
 class GoogleCredentialRequest(BaseModel):
@@ -117,9 +119,6 @@ class PreferencesRequest(BaseModel):
     preferred_theme: Literal["light", "dark", "system"]
     preferred_language: Literal["vi", "en"]
 
-
-def _smtp_configured() -> bool:
-    return bool(settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD and settings.SMTP_FROM)
 
 
 @router.get("/me")
@@ -168,8 +167,8 @@ async def change_password(payload: ChangePasswordRequest, user: dict = Depends(g
         except Exception as exc:
             raise HTTPException(status_code=401, detail={"code": "INVALID_CURRENT_PASSWORD", "message": "Mật khẩu hiện tại không đúng."}) from exc
     else:
-        if not _smtp_configured():
-            raise HTTPException(status_code=400, detail={"code": "PASSWORD_RESET_REQUIRED", "message": "Tài khoản Google cần xác thực email/reset mật khẩu trước khi đặt mật khẩu."})
+        if str(payload.otp_code or "").strip() != DEMO_OTP_CODE:
+            raise HTTPException(status_code=400, detail={"code": "DEMO_OTP_REQUIRED", "message": "Vui lòng nhập mã OTP demo 8888 để đặt mật khẩu cho tài khoản Google."})
     try:
         supabase.auth.admin.update_user_by_id(_user_id(user), {"password": payload.new_password})
     except Exception as exc:
@@ -180,10 +179,8 @@ async def change_password(payload: ChangePasswordRequest, user: dict = Depends(g
 
 @router.post("/2fa/email/enable")
 async def enable_email_2fa(user: dict = Depends(get_current_user)) -> dict:
-    if not _smtp_configured():
-        return {"success": True, "data": {"enabled": False, "message": "Cần cấu hình Email SMTP để bật 2FA."}}
     profile = _update_profile(user, {"email_2fa_enabled": True})
-    return {"success": True, "data": {"enabled": True, "user": _safe_profile(profile, user), "message": "Đã bật 2FA email."}}
+    return {"success": True, "data": {"enabled": True, "user": _safe_profile(profile, user), "message": "Đã bật 2FA email. Mã OTP demo là 8888."}}
 
 
 @router.post("/2fa/email/disable")

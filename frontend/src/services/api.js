@@ -237,7 +237,7 @@ export const api = {
   exportProfileData: async (token) => {
     try {
       const response = await axiosInstance.get("/api/profile/export-data", { headers: authHeader(token), responseType: "blob" });
-      return await triggerBlobDownload(response, `user-data-${new Date().toISOString().slice(0, 10)}.json`);
+      return getBlobResponse(response, `user-data-${new Date().toISOString().slice(0, 10)}.json`);
     } catch (err) {
       throw normalizeError(err);
     }

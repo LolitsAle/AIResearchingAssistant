@@ -66,7 +66,7 @@ export default function AppShell() {
         onToggleCollapsed={() => setCollapsed((value) => !value)}
         onCloseMobile={() => setMobileOpen(false)}
       />
-      <main className="app-shell__main">
+      <main className="app-shell__main app-scrollbar">
         <Outlet />
       </main>
     </div>
