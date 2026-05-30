@@ -2,48 +2,26 @@
 """Authentication routes using Supabase Auth."""
 
 from typing import Any, Dict
+
 import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from supabase import create_client, Client
-from app.models.schemas import RegisterRequest, LoginRequest
 from pydantic import BaseModel, EmailStr
-from app.dependencies import get_current_user, DEV_ADMIN_TOKEN, _role_from_auth_user, _role_from_profile
-from app.db.supabase_client import supabase
+from supabase import Client, create_client
+
 from app.config import settings
+from app.db.supabase_client import supabase
+from app.dependencies import (
+    DEV_ADMIN_TOKEN,
+    _role_from_auth_user,
+    _role_from_profile,
+    get_current_user,
+)
+from app.models.schemas import LoginRequest, RegisterRequest
 from app.services.google_auth_service import verify_google_credential
 from app.services.internal_jwt_service import create_app_access_token
 
-# PREFIX khớp với api_contract.md: /api/auth/*
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-
-
-
-def _supabase_response_data(resp: Any):
-    if isinstance(resp, dict):
-        return resp.get("data"), resp.get("error")
-    return getattr(resp, "data", None), getattr(resp, "error", None)
-
-def _anon_client() -> Client:
-    """Tạo client mới dùng anon key cho mỗi request auth.
-    Tránh lỗi session bị lưu trong singleton supabase client.
-    """
-    return create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
-
-
-
-
-def _user_payload(user_id: str, email: str, role: str = "user", profile: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    profile = profile or {}
-    display = profile.get("display_name") or profile.get("full_name") or (email.split("@")[0] if "@" in email else email)
-    return {
-        "id": user_id,
-        "user_id": user_id,
-        "name": display,
-        "email": email,
-        "avatar_url": profile.get("avatar_url"),
-        "role": role,
-    }
 
 
 class GoogleAuthRequest(BaseModel):
@@ -54,75 +32,17 @@ class PasswordResetRequest(BaseModel):
     email: EmailStr
 
 
-def _profile_for_user(user_id: str) -> Dict[str, Any]:
-    try:
-        resp = supabase.table("profiles").select("*").eq("id", user_id).limit(1).execute()
-        rows, error = _supabase_response_data(resp)
-        if not error and rows:
-            return rows[0]
-    except Exception:
-        return {}
-    return {}
+def _supabase_response_data(resp: Any):
+    if isinstance(resp, dict):
+        return resp.get("data"), resp.get("error")
+    return getattr(resp, "data", None), getattr(resp, "error", None)
 
 
-def _profile_by_google_id(google_id: str) -> Dict[str, Any]:
-    try:
-        resp = supabase.table("profiles").select("*").eq("google_id", google_id).limit(1).execute()
-        rows, error = _supabase_response_data(resp)
-        if not error and rows:
-            return rows[0]
-    except Exception:
-        return {}
-    return {}
-
-
-def _profile_by_email(email: str) -> Dict[str, Any]:
-    try:
-        resp = supabase.table("profiles").select("*").ilike("email", email).limit(1).execute()
-        rows, error = _supabase_response_data(resp)
-        if not error and rows:
-            return rows[0]
-    except Exception:
-        return {}
-    return {}
-
-
-def _auth_user_by_email(email: str) -> Any | None:
-    try:
-        resp = supabase.auth.admin.list_users()
-        for auth_user in _auth_users_from_response(resp):
-            if str(_auth_user_field(auth_user, "email") or "").lower() == email.lower():
-                return auth_user
-    except Exception as exc:
-        print(f"GOOGLE AUTH USER LOOKUP FAILED: {exc}")
-    return None
-
-
-def _ensure_profile(user_id: str, email: str, values: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    payload = {"id": user_id, "email": email, **(values or {})}
-    try:
-        resp = supabase.table("profiles").upsert(payload, on_conflict="id").execute()
-        rows, error = _supabase_response_data(resp)
-        if not error and rows:
-            return rows[0]
-    except Exception as exc:
-        if "google_email" in payload or "google_avatar_url" in payload:
-            payload.pop("google_email", None)
-            payload.pop("google_avatar_url", None)
-            try:
-                resp = supabase.table("profiles").upsert(payload, on_conflict="id").execute()
-                rows, error = _supabase_response_data(resp)
-                if not error and rows:
-                    return rows[0]
-            except Exception as retry_exc:
-                print(f"PROFILE UPSERT FAILED: {retry_exc}")
-        else:
-            print(f"PROFILE UPSERT FAILED: {exc}")
-    return _profile_for_user(user_id)
-
-
-def _is_dev_admin_login(email: str, password: str) -> bool:
-    return email.strip() == (settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin") and password == (settings.SYSTEM_LIBRARY_ADMIN_PASSWORD or "admin")
+def _anon_client() -> Client:
+    """Tạo client mới dùng anon key cho mỗi request auth.
+    Tránh lỗi session bị lưu trong singleton supabase client.
+    """
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
 
 
 def _auth_user_field(user_obj: Any, field: str) -> Any:
@@ -134,71 +54,333 @@ def _auth_user_field(user_obj: Any, field: str) -> Any:
 def _auth_users_from_response(resp: Any) -> list[Any]:
     if isinstance(resp, dict):
         return resp.get("users") or (resp.get("data") or {}).get("users") or []
-    return getattr(resp, "users", None) or getattr(resp, "data", None) or []
+
+    users = getattr(resp, "users", None)
+    if users is not None:
+        return users
+
+    data = getattr(resp, "data", None)
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+        return data.get("users") or []
+
+    return []
+
+
+def _extract_auth_user_from_response(resp: Any) -> Any | None:
+    """Supabase-py có thể trả AuthResponse object hoặc dict tùy version.
+    Hàm này gom các dạng response phổ biến để lấy user an toàn.
+    """
+    if resp is None:
+        return None
+
+    user = getattr(resp, "user", None)
+    if user is not None:
+        return user
+
+    data = getattr(resp, "data", None)
+    if data is not None:
+        data_user = getattr(data, "user", None)
+        if data_user is not None:
+            return data_user
+
+        if isinstance(data, dict):
+            return data.get("user") or data
+
+    if isinstance(resp, dict):
+        user = resp.get("user")
+        if user is not None:
+            return user
+
+        data = resp.get("data")
+        if isinstance(data, dict):
+            return data.get("user") or data
+
+    return None
+
+
+def _extract_auth_user_id(resp: Any) -> str | None:
+    user = _extract_auth_user_from_response(resp)
+    user_id = _auth_user_field(user, "id")
+
+    if not user_id:
+        return None
+
+    return str(user_id)
+
+
+def _extract_auth_user_email(resp: Any) -> str | None:
+    user = _extract_auth_user_from_response(resp)
+    email = _auth_user_field(user, "email")
+
+    if not email:
+        return None
+
+    return str(email)
+
+
+def _user_payload(
+    user_id: str,
+    email: str,
+    role: str = "user",
+    profile: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    profile = profile or {}
+    display = (
+        profile.get("display_name")
+        or profile.get("full_name")
+        or (email.split("@")[0] if "@" in email else email)
+    )
+
+    return {
+        "id": user_id,
+        "user_id": user_id,
+        "name": display,
+        "email": email,
+        "avatar_url": profile.get("avatar_url"),
+        "role": role,
+    }
+
+
+def _profile_for_user(user_id: str) -> Dict[str, Any]:
+    try:
+        resp = (
+            supabase.table("profiles")
+            .select("*")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows, error = _supabase_response_data(resp)
+
+        if not error and rows:
+            return rows[0]
+    except Exception as exc:
+        print(f"PROFILE LOOKUP FAILED: {exc}")
+
+    return {}
+
+
+def _profile_by_google_id(google_id: str) -> Dict[str, Any]:
+    try:
+        resp = (
+            supabase.table("profiles")
+            .select("*")
+            .eq("google_id", google_id)
+            .limit(1)
+            .execute()
+        )
+        rows, error = _supabase_response_data(resp)
+
+        if not error and rows:
+            return rows[0]
+    except Exception as exc:
+        print(f"PROFILE GOOGLE LOOKUP FAILED: {exc}")
+
+    return {}
+
+
+def _profile_by_email(email: str) -> Dict[str, Any]:
+    try:
+        resp = (
+            supabase.table("profiles")
+            .select("*")
+            .ilike("email", email)
+            .limit(1)
+            .execute()
+        )
+        rows, error = _supabase_response_data(resp)
+
+        if not error and rows:
+            return rows[0]
+    except Exception as exc:
+        print(f"PROFILE EMAIL LOOKUP FAILED: {exc}")
+
+    return {}
+
+
+def _auth_user_by_email(email: str) -> Any | None:
+    try:
+        resp = supabase.auth.admin.list_users()
+
+        for auth_user in _auth_users_from_response(resp):
+            auth_email = str(_auth_user_field(auth_user, "email") or "")
+
+            if auth_email.lower() == email.lower():
+                return auth_user
+    except Exception as exc:
+        print(f"GOOGLE AUTH USER LOOKUP FAILED: {exc}")
+
+    return None
+
+
+def _ensure_profile(
+    user_id: str,
+    email: str,
+    values: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    payload = {
+        "id": user_id,
+        "email": email,
+        **(values or {}),
+    }
+
+    try:
+        resp = supabase.table("profiles").upsert(payload, on_conflict="id").execute()
+        rows, error = _supabase_response_data(resp)
+
+        if not error and rows:
+            return rows[0]
+
+        if error:
+            print(f"PROFILE UPSERT ERROR: {error}")
+    except Exception as exc:
+        print(f"PROFILE UPSERT FAILED: {exc}")
+
+        # Fallback cho database chưa có google_email/google_avatar_url.
+        fallback_payload = dict(payload)
+        fallback_payload.pop("google_email", None)
+        fallback_payload.pop("google_avatar_url", None)
+
+        if fallback_payload != payload:
+            try:
+                resp = (
+                    supabase.table("profiles")
+                    .upsert(fallback_payload, on_conflict="id")
+                    .execute()
+                )
+                rows, error = _supabase_response_data(resp)
+
+                if not error and rows:
+                    return rows[0]
+
+                if error:
+                    print(f"PROFILE FALLBACK UPSERT ERROR: {error}")
+            except Exception as retry_exc:
+                print(f"PROFILE FALLBACK UPSERT FAILED: {retry_exc}")
+
+    return _profile_for_user(user_id)
+
+
+def _is_dev_admin_login(email: str, password: str) -> bool:
+    expected_email = settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin"
+    expected_password = settings.SYSTEM_LIBRARY_ADMIN_PASSWORD or "admin"
+
+    return email.strip() == expected_email and password == expected_password
 
 
 def _confirm_password_user_email(email: str) -> bool:
     try:
         resp = supabase.auth.admin.list_users()
+
         for auth_user in _auth_users_from_response(resp):
-            if str(_auth_user_field(auth_user, "email") or "").lower() != email.lower():
+            auth_email = str(_auth_user_field(auth_user, "email") or "")
+
+            if auth_email.lower() != email.lower():
                 continue
+
             user_id = _auth_user_field(auth_user, "id")
             if not user_id:
                 return False
-            supabase.auth.admin.update_user_by_id(str(user_id), {"email_confirm": True})
+
+            supabase.auth.admin.update_user_by_id(
+                str(user_id),
+                {"email_confirm": True},
+            )
             return True
     except Exception as exc:
         print(f"AUTO EMAIL CONFIRM FAILED: {exc}")
+
     return False
+
 
 @router.post("/register")
 async def register(payload: RegisterRequest) -> Dict[str, Any]:
     try:
-        resp = supabase.auth.admin.create_user({
-            "email": payload.email,
-            "password": payload.password,
-            "email_confirm": True,
-            "user_metadata": {"auth_provider": "password"},
-        })
-    except Exception as e:
-        message = str(e)
-        print(f"LỖI ĐĂNG KÝ: {e}")
-        if "already" in message.lower() or "duplicate" in message.lower() or "registered" in message.lower():
+        resp = supabase.auth.admin.create_user(
+            {
+                "email": payload.email,
+                "password": payload.password,
+                "email_confirm": True,
+                "user_metadata": {"auth_provider": "password"},
+            }
+        )
+    except Exception as exc:
+        message = str(exc)
+        print(f"LỖI ĐĂNG KÝ: {exc}")
+
+        if any(word in message.lower() for word in ["already", "duplicate", "registered"]):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "EMAIL_TAKEN", "message": "Email đã được đăng ký"},
-            ) from e
+                detail={
+                    "code": "EMAIL_TAKEN",
+                    "message": "Email đã được đăng ký",
+                },
+            ) from exc
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "INTERNAL_ERROR", "message": "Failed to register user"},
-        ) from e
+            detail={
+                "code": "INTERNAL_ERROR",
+                "message": "Failed to register user",
+            },
+        ) from exc
 
-    error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
-    user = getattr(resp, "user", None) or (resp.get("data", {}) or {}).get("user")
+    error = getattr(resp, "error", None) or (
+        resp.get("error") if isinstance(resp, dict) else None
+    )
 
     if error:
         message = getattr(error, "message", str(error))
-        if "already registered" in message.lower() or "duplicate" in message.lower():
+
+        if any(word in message.lower() for word in ["already registered", "duplicate"]):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={"code": "EMAIL_TAKEN", "message": "Email đã được đăng ký"},
+                detail={
+                    "code": "EMAIL_TAKEN",
+                    "message": "Email đã được đăng ký",
+                },
             )
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INTERNAL_ERROR", "message": message},
+            detail={
+                "code": "INTERNAL_ERROR",
+                "message": message,
+            },
         )
 
-    if not user:
+    user_id = _extract_auth_user_id(resp)
+    email = _extract_auth_user_email(resp)
+
+    if not user_id or not email:
+        print("REGISTER AUTH RESPONSE:", resp)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "INTERNAL_ERROR", "message": "Unexpected response from auth provider"},
+            detail={
+                "code": "INTERNAL_ERROR",
+                "message": "Unexpected response from auth provider",
+            },
         )
 
-    user_id = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
-    email = getattr(user, "email", None) or (user.get("email") if isinstance(user, dict) else None)
-    _ensure_profile(str(user_id), email, {"password_login_enabled": True, "auth_provider": "password"})
-    return {"success": True, "data": {"user_id": user_id, "email": email}}
+    _ensure_profile(
+        user_id,
+        email,
+        {
+            "password_login_enabled": True,
+            "auth_provider": "password",
+        },
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "user_id": user_id,
+            "email": email,
+        },
+    }
 
 
 @router.post("/login")
@@ -209,70 +391,132 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
             "data": {
                 "access_token": DEV_ADMIN_TOKEN,
                 "token_type": "bearer",
-                "user": _user_payload("dev-admin", settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin", "admin"),
+                "user": _user_payload(
+                    "dev-admin",
+                    settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin",
+                    "admin",
+                ),
             },
         }
 
     client = _anon_client()
+
     try:
-        resp = client.auth.sign_in_with_password({"email": payload.email, "password": payload.password})
-    except Exception as e:
-        print(f"LỖI ĐĂNG NHẬP: {e}")
+        resp = client.auth.sign_in_with_password(
+            {
+                "email": payload.email,
+                "password": payload.password,
+            }
+        )
+    except Exception as exc:
+        print(f"LỖI ĐĂNG NHẬP: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "INTERNAL_ERROR", "message": "Authentication service error"},
-        )
+            detail={
+                "code": "INTERNAL_ERROR",
+                "message": "Authentication service error",
+            },
+        ) from exc
 
-    error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
+    error = getattr(resp, "error", None) or (
+        resp.get("error") if isinstance(resp, dict) else None
+    )
+
     if error:
         message = getattr(error, "message", str(error))
-        if "email not confirmed" in message.lower() and _confirm_password_user_email(payload.email):
+
+        if "email not confirmed" in message.lower() and _confirm_password_user_email(
+            payload.email
+        ):
             try:
-                resp = client.auth.sign_in_with_password({"email": payload.email, "password": payload.password})
-                error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
+                resp = client.auth.sign_in_with_password(
+                    {
+                        "email": payload.email,
+                        "password": payload.password,
+                    }
+                )
+                error = getattr(resp, "error", None) or (
+                    resp.get("error") if isinstance(resp, dict) else None
+                )
                 message = getattr(error, "message", str(error)) if error else ""
-            except Exception as e:
-                print(f"LỖI ĐĂNG NHẬP SAU XÁC NHẬN EMAIL TỰ ĐỘNG: {e}")
+            except Exception as exc:
+                print(f"LỖI ĐĂNG NHẬP SAU XÁC NHẬN EMAIL TỰ ĐỘNG: {exc}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail={"code": "INTERNAL_ERROR", "message": "Authentication service error"},
-                ) from e
+                    detail={
+                        "code": "INTERNAL_ERROR",
+                        "message": "Authentication service error",
+                    },
+                ) from exc
+
         if error:
             if "email not confirmed" in message.lower():
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"code": "EMAIL_NOT_CONFIRMED", "message": "Email chưa được xác nhận trên hệ thống xác thực. Tài khoản đăng ký mới bằng mật khẩu sẽ được xác nhận tự động; vui lòng đăng ký lại hoặc liên hệ quản trị viên nếu đây là tài khoản cũ."},
+                    detail={
+                        "code": "EMAIL_NOT_CONFIRMED",
+                        "message": "Email chưa được xác nhận trên hệ thống xác thực. Tài khoản đăng ký mới bằng mật khẩu sẽ được xác nhận tự động; vui lòng đăng ký lại hoặc liên hệ quản trị viên nếu đây là tài khoản cũ.",
+                    },
                 )
-            if any(w in message.lower() for w in ["invalid", "wrong", "credentials"]):
+
+            if any(word in message.lower() for word in ["invalid", "wrong", "credentials"]):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={"code": "INVALID_CREDENTIALS", "message": "Sai email hoặc mật khẩu. Vui lòng thử lại!"},
+                    detail={
+                        "code": "INVALID_CREDENTIALS",
+                        "message": "Sai email hoặc mật khẩu. Vui lòng thử lại!",
+                    },
                 )
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "INTERNAL_ERROR", "message": message},
+                detail={
+                    "code": "INTERNAL_ERROR",
+                    "message": message,
+                },
             )
 
     session = getattr(resp, "session", None)
     user = getattr(resp, "user", None)
+
     if not session or not user:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "INTERNAL_ERROR", "message": "Failed to obtain access token"},
+            detail={
+                "code": "INTERNAL_ERROR",
+                "message": "Failed to obtain access token",
+            },
         )
 
     access_token = getattr(session, "access_token", None)
     user_id = getattr(user, "id", None)
     email = getattr(user, "email", None)
+
+    if not access_token or not user_id or not email:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "INTERNAL_ERROR",
+                "message": "Invalid login response from auth provider",
+            },
+        )
+
     role = _role_from_auth_user(user) or _role_from_profile(str(user_id)) or "user"
 
-    profile = _ensure_profile(str(user_id), email, {"password_login_enabled": True})
+    profile = _ensure_profile(
+        str(user_id),
+        str(email),
+        {
+            "password_login_enabled": True,
+        },
+    )
+
     return {
         "success": True,
         "data": {
             "access_token": access_token,
             "token_type": "bearer",
-            "user": _user_payload(str(user_id), email, role, profile),
+            "user": _user_payload(str(user_id), str(email), role, profile),
         },
     }
 
@@ -280,30 +524,55 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
 @router.get("/me")
 async def me(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     profile = _profile_for_user(user["user_id"])
-    return {"success": True, "data": {"user": _user_payload(user["user_id"], user["email"], user.get("role", "user"), profile)}}
+
+    return {
+        "success": True,
+        "data": {
+            "user": _user_payload(
+                user["user_id"],
+                user["email"],
+                user.get("role", "user"),
+                profile,
+            )
+        },
+    }
 
 
 @router.post("/logout")
 async def logout(request: Request) -> Dict[str, Any]:
     authorization = request.headers.get("Authorization", "")
+
     if not authorization.lower().startswith("bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "UNAUTHORIZED", "message": "Missing authorization token"},
+            detail={
+                "code": "UNAUTHORIZED",
+                "message": "Missing authorization token",
+            },
         )
 
     try:
         supabase.auth.sign_out()
     except Exception:
-        pass  # sign_out idempotent — luôn trả success
+        pass
 
-    return {"success": True, "data": {"message": "Đăng xuất thành công"}}
+    return {
+        "success": True,
+        "data": {
+            "message": "Đăng xuất thành công",
+        },
+    }
+
 
 @router.post("/google")
 async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
     claims = verify_google_credential(payload.credential)
-    email = claims["email"]
-    google_id = claims["sub"]
+
+    email = str(claims["email"])
+    google_id = str(claims["sub"])
+    google_name = claims.get("name")
+    google_given_name = claims.get("given_name")
+    google_picture = claims.get("picture")
 
     if not settings.JWT_SECRET_KEY:
         raise HTTPException(
@@ -315,70 +584,176 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
         )
 
     profile = _profile_by_google_id(google_id)
+
     if profile:
         user_id = str(profile["id"])
         role = str(profile.get("role") or _role_from_profile(user_id) or "user")
+
         if profile.get("is_active") is False:
-            raise HTTPException(status_code=403, detail={"code": "ACCOUNT_DISABLED", "message": "Tài khoản đã bị vô hiệu hóa."})
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "ACCOUNT_DISABLED",
+                    "message": "Tài khoản đã bị vô hiệu hóa.",
+                },
+            )
+
+        access_token = create_app_access_token(user_id=user_id, email=email, role=role)
+
+        return {
+            "success": True,
+            "data": {
+                "access_token": access_token,
+                "token_type": "bearer",
+                "user": _user_payload(user_id, email, role, profile),
+            },
+        }
+
+    profile = _profile_by_email(email)
+    auth_user = None
+
+    if profile:
+        existing_google_id = profile.get("google_id")
+
+        if existing_google_id and existing_google_id != google_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "GOOGLE_ACCOUNT_CONFLICT",
+                    "message": "Email này đang được liên kết với một tài khoản Google khác.",
+                },
+            )
+
+        user_id = str(profile["id"])
     else:
-        profile = _profile_by_email(email)
-        auth_user = None
-        if profile:
-            existing_google_id = profile.get("google_id")
-            if existing_google_id and existing_google_id != google_id:
+        auth_user = _auth_user_by_email(email)
+
+        if auth_user:
+            auth_user_id = _auth_user_field(auth_user, "id")
+
+            if not auth_user_id:
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={"code": "GOOGLE_ACCOUNT_CONFLICT", "message": "Email này đang được liên kết với một tài khoản Google khác."},
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "code": "GOOGLE_USER_LOOKUP_FAILED",
+                        "message": "Không thể lấy thông tin tài khoản Google.",
+                    },
                 )
-            user_id = str(profile["id"])
+
+            user_id = str(auth_user_id)
         else:
-            auth_user = _auth_user_by_email(email)
-            if auth_user:
-                user_id = str(_auth_user_field(auth_user, "id"))
-            else:
-                try:
-                    created = supabase.auth.admin.create_user({
+            try:
+                created = supabase.auth.admin.create_user(
+                    {
                         "email": email,
                         "password": secrets.token_urlsafe(32),
                         "email_confirm": True,
-                        "user_metadata": {"auth_provider": "google", "google_id": google_id},
-                    })
-                    user_obj = getattr(created, "user", None) or (created.get("data", {}) or {}).get("user") if isinstance(created, dict) else None
-                    user_id = str(_auth_user_field(user_obj, "id"))
-                    if not user_id or user_id == "None":
-                        raise RuntimeError("Supabase did not return a user id")
-                except Exception as exc:
-                    print(f"GOOGLE USER CREATE FAILED: {exc}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail={"code": "GOOGLE_USER_CREATE_FAILED", "message": "Không thể tạo tài khoản Google."},
-                    ) from exc
-        profile = _ensure_profile(user_id, email, {
-            "full_name": claims.get("name"),
-            "display_name": claims.get("given_name") or claims.get("name"),
-            "avatar_url": claims.get("picture"),
+                        "user_metadata": {
+                            "auth_provider": "google",
+                            "google_id": google_id,
+                            "full_name": google_name,
+                            "name": google_name,
+                            "avatar_url": google_picture,
+                            "picture": google_picture,
+                            "sub": google_id,
+                        },
+                        "app_metadata": {
+                            "provider": "google",
+                        },
+                    }
+                )
+
+                user_id = _extract_auth_user_id(created)
+
+                if not user_id:
+                    print("SUPABASE CREATE USER RESPONSE:", created)
+                    print("SUPABASE CREATE USER RESPONSE TYPE:", type(created))
+                    print("SUPABASE CREATE USER .user:", getattr(created, "user", None))
+                    print("SUPABASE CREATE USER .data:", getattr(created, "data", None))
+                    raise RuntimeError("Supabase did not return a user id")
+            except Exception as exc:
+                print(f"GOOGLE USER CREATE FAILED: {exc}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "code": "GOOGLE_USER_CREATE_FAILED",
+                        "message": "Không thể tạo tài khoản Google.",
+                    },
+                ) from exc
+
+    profile = _ensure_profile(
+        user_id,
+        email,
+        {
+            "full_name": google_name,
+            "display_name": google_given_name or google_name,
+            "avatar_url": google_picture,
             "google_id": google_id,
             "google_email": email,
-            "google_avatar_url": claims.get("picture"),
+            "google_avatar_url": google_picture,
             "auth_provider": "google",
             "is_active": True,
-            "password_login_enabled": bool(profile.get("password_login_enabled", False)) if profile else False,
-        })
-        role = str(profile.get("role") or _role_from_profile(user_id) or "user")
-        if profile.get("is_active") is False:
-            raise HTTPException(status_code=403, detail={"code": "ACCOUNT_DISABLED", "message": "Tài khoản đã bị vô hiệu hóa."})
+            "password_login_enabled": bool(
+                profile.get("password_login_enabled", False)
+            )
+            if profile
+            else False,
+        },
+    )
+
+    role = str(profile.get("role") or _role_from_profile(user_id) or "user")
+
+    if profile.get("is_active") is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "ACCOUNT_DISABLED",
+                "message": "Tài khoản đã bị vô hiệu hóa.",
+            },
+        )
 
     access_token = create_app_access_token(user_id=user_id, email=email, role=role)
-    return {"success": True, "data": {"access_token": access_token, "token_type": "bearer", "user": _user_payload(user_id, email, role, profile)}}
+
+    return {
+        "success": True,
+        "data": {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": _user_payload(user_id, email, role, profile),
+        },
+    }
 
 
 @router.post("/request-password-reset")
 async def request_password_reset(payload: PasswordResetRequest) -> Dict[str, Any]:
-    if not (settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD and settings.SMTP_FROM):
-        return {"success": True, "data": {"message": "Tính năng gửi email reset cần cấu hình Email SMTP."}}
+    if not (
+        settings.SMTP_HOST
+        and settings.SMTP_USER
+        and settings.SMTP_PASSWORD
+        and settings.SMTP_FROM
+    ):
+        return {
+            "success": True,
+            "data": {
+                "message": "Tính năng gửi email reset cần cấu hình Email SMTP.",
+            },
+        }
+
     try:
         _anon_client().auth.reset_password_email(str(payload.email))
     except Exception as exc:
         print(f"PASSWORD RESET FAILED: {exc}")
-        raise HTTPException(status_code=500, detail={"code": "RESET_EMAIL_FAILED", "message": "Không thể gửi email reset mật khẩu."}) from exc
-    return {"success": True, "data": {"message": "Nếu email tồn tại, hướng dẫn reset mật khẩu đã được gửi."}}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "RESET_EMAIL_FAILED",
+                "message": "Không thể gửi email reset mật khẩu.",
+            },
+        ) from exc
+
+    return {
+        "success": True,
+        "data": {
+            "message": "Nếu email tồn tại, hướng dẫn reset mật khẩu đã được gửi.",
+        },
+    }
