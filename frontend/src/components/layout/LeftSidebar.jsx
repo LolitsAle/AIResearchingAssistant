@@ -47,6 +47,8 @@ const STYLES = `
     box-shadow: 22px 0 60px rgba(0,0,0,0.35);
     transition: width 0.2s ease, transform 0.22s ease;
     font-family: 'Lora', Georgia, serif;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   .left-sidebar.is-collapsed { width: 92px; }
   .left-sidebar__brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 12px; min-height: 54px; }
@@ -156,7 +158,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
   };
 
   return (
-    <aside className={`left-sidebar ${collapsed ? 'is-collapsed' : ''} ${mobileOpen ? 'is-mobile-open' : ''}`}>
+    <aside className={`left-sidebar app-scrollbar ${collapsed ? 'is-collapsed' : ''} ${mobileOpen ? 'is-mobile-open' : ''}`}>
       <style>{STYLES}</style>
       <div className="left-sidebar__brand">
         <button type="button" className="left-sidebar__brand-home" onClick={() => { navigate('/home'); onCloseMobile?.(); }} aria-label="Về trang chủ">

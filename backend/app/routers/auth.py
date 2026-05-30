@@ -78,17 +78,55 @@ def _ensure_profile(user_id: str, email: str, values: Dict[str, Any] | None = No
 def _is_dev_admin_login(email: str, password: str) -> bool:
     return email.strip() == (settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin") and password == (settings.SYSTEM_LIBRARY_ADMIN_PASSWORD or "admin")
 
+
+def _auth_user_field(user_obj: Any, field: str) -> Any:
+    if isinstance(user_obj, dict):
+        return user_obj.get(field)
+    return getattr(user_obj, field, None)
+
+
+def _auth_users_from_response(resp: Any) -> list[Any]:
+    if isinstance(resp, dict):
+        return resp.get("users") or (resp.get("data") or {}).get("users") or []
+    return getattr(resp, "users", None) or getattr(resp, "data", None) or []
+
+
+def _confirm_password_user_email(email: str) -> bool:
+    try:
+        resp = supabase.auth.admin.list_users()
+        for auth_user in _auth_users_from_response(resp):
+            if str(_auth_user_field(auth_user, "email") or "").lower() != email.lower():
+                continue
+            user_id = _auth_user_field(auth_user, "id")
+            if not user_id:
+                return False
+            supabase.auth.admin.update_user_by_id(str(user_id), {"email_confirm": True})
+            return True
+    except Exception as exc:
+        print(f"AUTO EMAIL CONFIRM FAILED: {exc}")
+    return False
+
 @router.post("/register")
 async def register(payload: RegisterRequest) -> Dict[str, Any]:
-    client = _anon_client()
     try:
-        resp = client.auth.sign_up({"email": payload.email, "password": payload.password})
+        resp = supabase.auth.admin.create_user({
+            "email": payload.email,
+            "password": payload.password,
+            "email_confirm": True,
+            "user_metadata": {"auth_provider": "password"},
+        })
     except Exception as e:
+        message = str(e)
         print(f"LỖI ĐĂNG KÝ: {e}")
+        if "already" in message.lower() or "duplicate" in message.lower() or "registered" in message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "EMAIL_TAKEN", "message": "Email đã được đăng ký"},
+            ) from e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Failed to register user"},
-        )
+        ) from e
 
     error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
     user = getattr(resp, "user", None) or (resp.get("data", {}) or {}).get("user")
@@ -142,20 +180,32 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
     error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
     if error:
         message = getattr(error, "message", str(error))
-        if "email not confirmed" in message.lower():
+        if "email not confirmed" in message.lower() and _confirm_password_user_email(payload.email):
+            try:
+                resp = client.auth.sign_in_with_password({"email": payload.email, "password": payload.password})
+                error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
+                message = getattr(error, "message", str(error)) if error else ""
+            except Exception as e:
+                print(f"LỖI ĐĂNG NHẬP SAU XÁC NHẬN EMAIL TỰ ĐỘNG: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={"code": "INTERNAL_ERROR", "message": "Authentication service error"},
+                ) from e
+        if error:
+            if "email not confirmed" in message.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={"code": "EMAIL_NOT_CONFIRMED", "message": "Email chưa được xác nhận trên hệ thống xác thực. Tài khoản đăng ký mới bằng mật khẩu sẽ được xác nhận tự động; vui lòng đăng ký lại hoặc liên hệ quản trị viên nếu đây là tài khoản cũ."},
+                )
+            if any(w in message.lower() for w in ["invalid", "wrong", "credentials"]):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={"code": "INVALID_CREDENTIALS", "message": "Sai email hoặc mật khẩu. Vui lòng thử lại!"},
+                )
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"code": "EMAIL_NOT_CONFIRMED", "message": "Email chưa được xác nhận. Vui lòng kiểm tra hộp thư."},
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INTERNAL_ERROR", "message": message},
             )
-        if any(w in message.lower() for w in ["invalid", "wrong", "credentials"]):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"code": "INVALID_CREDENTIALS", "message": "Sai email hoặc mật khẩu. Vui lòng thử lại!"},
-            )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INTERNAL_ERROR", "message": message},
-        )
 
     session = getattr(resp, "session", None)
     user = getattr(resp, "user", None)

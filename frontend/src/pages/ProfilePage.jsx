@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -30,15 +30,40 @@ function useGoogleCredential(callback) {
   return { buttonRef, configured: Boolean(clientId) };
 }
 
-function downloadBlob({ blob, filename }) {
+function downloadJsonFile(data, filename) {
+  const payload = data?.blob ?? data;
+  if (payload == null) throw new Error('Không thể tải dữ liệu cá nhân. Vui lòng thử lại.');
+
+  const blob = payload instanceof Blob
+    ? payload
+    : new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = data?.filename || filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function ProfileNotice({ notice, onClose }) {
+  if (!notice?.message) return null;
+  const icon = notice.type === 'success' ? '✓' : notice.type === 'error' ? '⚠' : notice.type === 'warning' ? '!' : 'i';
+  return (
+    <div className={`profile-notice ${notice.type || 'info'}`} role="status">
+      <span className="profile-notice__icon" aria-hidden="true">{icon}</span>
+      <div>
+        {notice.title ? <strong>{notice.title}</strong> : null}
+        <p>{notice.message}</p>
+      </div>
+      <button type="button" className="profile-notice__close" onClick={onClose} aria-label="Đóng thông báo">×</button>
+    </div>
+  );
 }
 
 function fmtDate(value) {
@@ -51,12 +76,12 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState(null);
   const [activity, setActivity] = useState(null);
   const [tab, setTab] = useState('basic');
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const showSuccess = (text) => { setMessage(text); setError(''); };
-  const showError = (err) => { setError(err?.message || 'Đã có lỗi xảy ra.'); setMessage(''); };
+  const showSuccess = (text) => setNotice({ type: 'success', message: text });
+  const showError = (err) => setNotice({ type: 'error', message: err?.message || 'Đã có lỗi xảy ra.' });
+  const switchTab = (nextTab) => { setTab(nextTab); setNotice(null); };
 
   const load = async () => {
     setLoading(true);
@@ -71,13 +96,6 @@ export default function ProfilePage() {
 
   useEffect(() => { if (token) load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    const theme = profile?.preferred_theme || 'system';
-    document.documentElement.dataset.themePreference = theme;
-    const dark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-    document.documentElement.classList.toggle('profile-dark', dark);
-  }, [profile?.preferred_theme]);
-
   const updateProfile = (nextUser) => {
     setProfile(nextUser);
     updateUserContext(nextUser);
@@ -85,11 +103,11 @@ export default function ProfilePage() {
 
   const tabs = [
     ['basic', 'Thông tin cá nhân'], ['security', 'Bảo mật'], ['social', 'Liên kết tài khoản'],
-    ['activity', 'Hoạt động'], ['preferences', 'Tuỳ chọn'], ['data', 'Dữ liệu & tài khoản'],
+    ['activity', 'Hoạt động'], ['data', 'Dữ liệu & tài khoản'],
   ];
 
   return (
-    <main className="profile-page">
+    <main className="profile-page app-scrollbar">
       <style>{styles}</style>
       <header className="profile-hero">
         <div>
@@ -103,17 +121,15 @@ export default function ProfilePage() {
         </div>
       </header>
 
-      {message && <div className="notice success">✓ {message}</div>}
-      {error && <div className="notice error">⚠ {error}</div>}
+      <ProfileNotice notice={notice} onClose={() => setNotice(null)} />
 
-      <nav className="profile-tabs">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}</nav>
+      <nav className="profile-tabs">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => switchTab(id)}>{label}</button>)}</nav>
 
       {loading ? <section className="card">Đang tải hồ sơ...</section> : null}
       {!loading && profile && tab === 'basic' && <BasicInfo profile={profile} token={token} onUpdate={updateProfile} onSuccess={showSuccess} onError={showError} />}
       {!loading && profile && tab === 'security' && <Security profile={profile} token={token} onUpdate={updateProfile} onSuccess={showSuccess} onError={showError} />}
       {!loading && profile && tab === 'social' && <SocialLinks profile={profile} token={token} onUpdate={updateProfile} onSuccess={showSuccess} onError={showError} />}
       {!loading && tab === 'activity' && <Activity activity={activity} />}
-      {!loading && profile && tab === 'preferences' && <Preferences profile={profile} token={token} onUpdate={updateProfile} onSuccess={showSuccess} onError={showError} />}
       {!loading && profile && tab === 'data' && <DataAccount token={token} onSuccess={showSuccess} onError={showError} logoutContext={logoutContext} />}
     </main>
   );
@@ -150,16 +166,16 @@ function BasicInfo({ profile, token, onUpdate, onSuccess, onError }) {
     try { const resp = await api.updateProfile({ ...form, date_of_birth: form.date_of_birth || null }, token); onUpdate(resp.user); onSuccess('Đã lưu thông tin cá nhân.'); }
     catch (err) { onError(err); }
   };
-  return <section className="grid two"><div className="card"><h2>Avatar</h2><div className="avatar-editor">{preview ? <img src={preview} alt="Preview avatar" /> : <span>{profile.email.charAt(0).toUpperCase()}</span>}</div><input type="file" accept="image/png,image/jpeg,image/webp" onChange={chooseAvatar} /><p className="muted">Ảnh được crop vuông bằng canvas trước khi upload. Tối đa 5MB.</p><button className="primary" disabled={!file} onClick={cropSquareAndUpload}>Upload avatar</button></div><form className="card form" onSubmit={submit}><h2>Thông tin cá nhân</h2><label>Họ và tên<input value={form.full_name} onChange={e=>setForm({...form, full_name:e.target.value})} /></label><label>Tên hiển thị / nickname<input value={form.display_name} onChange={e=>setForm({...form, display_name:e.target.value})} /></label><label>Email<input value={profile.email} disabled /></label><label>Giới tính<select value={form.gender} onChange={e=>setForm({...form, gender:e.target.value})}><option value="male">Nam</option><option value="female">Nữ</option><option value="other">Khác</option><option value="prefer_not_to_say">Không muốn nói</option></select></label><label>Ngày sinh<input type="date" value={form.date_of_birth || ''} onChange={e=>setForm({...form, date_of_birth:e.target.value})} /></label><button className="primary">Lưu thay đổi</button></form></section>;
+  return <section className="grid two"><div className="card avatar-card"><h2>Avatar</h2><div className="avatar-editor">{preview ? <img src={preview} alt="Preview avatar" /> : <span>{profile.email.charAt(0).toUpperCase()}</span>}</div><div className="avatar-identity"><strong>{form.display_name || form.full_name || profile.email}</strong><small>{profile.email}</small></div><label className="avatar-file-button">Chọn ảnh mới<input type="file" accept="image/png,image/jpeg,image/webp" onChange={chooseAvatar} /></label><p className="muted">Ảnh được crop vuông bằng canvas trước khi upload. Tối đa 5MB.</p><button className="primary" disabled={!file} onClick={cropSquareAndUpload}>Upload avatar</button></div><form className="card form" onSubmit={submit}><h2>Thông tin cá nhân</h2><label>Họ và tên<input value={form.full_name} onChange={e=>setForm({...form, full_name:e.target.value})} /></label><label>Tên hiển thị / nickname<input value={form.display_name} onChange={e=>setForm({...form, display_name:e.target.value})} /></label><label>Email<input value={profile.email} disabled /></label><label>Giới tính<select value={form.gender} onChange={e=>setForm({...form, gender:e.target.value})}><option value="male">Nam</option><option value="female">Nữ</option><option value="other">Khác</option><option value="prefer_not_to_say">Không muốn nói</option></select></label><label>Ngày sinh<input type="date" value={form.date_of_birth || ''} onChange={e=>setForm({...form, date_of_birth:e.target.value})} /></label><button className="primary">Lưu thay đổi</button></form></section>;
 }
 
 function Security({ profile, token, onUpdate, onSuccess, onError }) {
-  const [pw, setPw] = useState({ current_password: '', new_password: '', confirm: '' });
+  const [pw, setPw] = useState({ current_password: '', new_password: '', confirm: '', otp_code: '' });
   const [resetEmail, setResetEmail] = useState(profile.email);
-  const changePassword = async (e) => { e.preventDefault(); if (pw.new_password !== pw.confirm) return onError(new Error('Mật khẩu xác nhận không khớp.')); try { const resp = await api.changePassword({ current_password: pw.current_password || null, new_password: pw.new_password }, token); onSuccess(resp.message); setPw({ current_password:'', new_password:'', confirm:'' }); onUpdate({ ...profile, has_password: true }); } catch (err) { onError(err); } };
+  const changePassword = async (e) => { e.preventDefault(); if (pw.new_password !== pw.confirm) return onError(new Error('Mật khẩu xác nhận không khớp.')); try { const resp = await api.changePassword({ current_password: pw.current_password || null, new_password: pw.new_password, otp_code: pw.otp_code || null }, token); onSuccess(resp.message); setPw({ current_password:'', new_password:'', confirm:'', otp_code:'' }); onUpdate({ ...profile, has_password: true }); } catch (err) { onError(err); } };
   const reset = async () => { try { const resp = await api.requestPasswordReset(resetEmail); onSuccess(resp.message); } catch (err) { onError(err); } };
   const toggle2fa = async () => { try { const resp = profile.email_2fa_enabled ? await api.disableEmail2fa(token) : await api.enableEmail2fa(token); if (resp.user) onUpdate(resp.user); onSuccess(resp.message); } catch (err) { onError(err); } };
-  return <section className="grid two"><form className="card form" onSubmit={changePassword}><h2>Đổi mật khẩu</h2>{profile.has_password && <label>Mật khẩu hiện tại<input type="password" value={pw.current_password} onChange={e=>setPw({...pw,current_password:e.target.value})} /></label>}<label>Mật khẩu mới<input type="password" minLength={6} value={pw.new_password} onChange={e=>setPw({...pw,new_password:e.target.value})} required /></label><label>Xác nhận mật khẩu mới<input type="password" minLength={6} value={pw.confirm} onChange={e=>setPw({...pw,confirm:e.target.value})} required /></label><button className="primary">Cập nhật mật khẩu</button><p className="muted">Tài khoản chỉ dùng Google cần reset/xác thực email trước khi đặt mật khẩu.</p></form><div className="card form"><h2>Reset mật khẩu & 2FA email</h2><label>Email reset<input value={resetEmail} onChange={e=>setResetEmail(e.target.value)} /></label><button className="secondary" onClick={reset}>Yêu cầu reset mật khẩu</button><div className="divider" /><p>2FA email: <strong>{profile.email_2fa_enabled ? 'Đang bật' : 'Đang tắt'}</strong></p><p className="muted">Nếu SMTP chưa cấu hình, hệ thống sẽ không fake OTP và sẽ báo cần cấu hình.</p><button className="secondary" onClick={toggle2fa}>{profile.email_2fa_enabled ? 'Tắt 2FA email' : 'Bật 2FA email'}</button></div></section>;
+  return <section className="grid two"><form className="card form" onSubmit={changePassword}><h2>Đổi mật khẩu</h2>{profile.has_password ? <label>Mật khẩu hiện tại<input type="password" value={pw.current_password} onChange={e=>setPw({...pw,current_password:e.target.value})} /></label> : <label>OTP demo cho tài khoản Google<input inputMode="numeric" value={pw.otp_code} onChange={e=>setPw({...pw,otp_code:e.target.value})} placeholder="Nhập 8888" /></label>}<label>Mật khẩu mới<input type="password" minLength={6} value={pw.new_password} onChange={e=>setPw({...pw,new_password:e.target.value})} required /></label><label>Xác nhận mật khẩu mới<input type="password" minLength={6} value={pw.confirm} onChange={e=>setPw({...pw,confirm:e.target.value})} required /></label><button className="primary">Cập nhật mật khẩu</button><p className="muted">Tài khoản đăng nhập bằng mật khẩu chỉ cần nhập đúng mật khẩu hiện tại. Tài khoản chỉ dùng Google có thể đặt mật khẩu bằng OTP demo 8888.</p></form><div className="card form"><h2>Reset mật khẩu & 2FA email</h2><label>Email reset<input value={resetEmail} onChange={e=>setResetEmail(e.target.value)} /></label><button className="secondary" onClick={reset}>Yêu cầu reset mật khẩu</button><div className="divider" /><p>2FA email: <strong>{profile.email_2fa_enabled ? 'Đang bật' : 'Đang tắt'}</strong></p><p className="muted">Môi trường demo dùng mã OTP giả 8888 và luôn xác thực thành công.</p><button className="secondary" onClick={toggle2fa}>{profile.email_2fa_enabled ? 'Tắt 2FA email' : 'Bật 2FA email'}</button></div></section>;
 }
 
 function SocialLinks({ profile, token, onUpdate, onSuccess, onError }) {
@@ -174,21 +190,15 @@ function Activity({ activity }) {
   return <section className="card"><h2>Lịch sử hoạt động</h2><div className="stats"><div><strong>{fmtDate(activity?.account_created_at)}</strong><span>Ngày tạo tài khoản</span></div><div><strong>{stats.notebooks ?? 0}</strong><span>Notebook</span></div><div><strong>{stats.documents ?? 0}</strong><span>Tài liệu</span></div><div><strong>{stats.research_sessions ?? 0}</strong><span>Phiên nghiên cứu</span></div><div><strong>{stats.notes ?? 0}</strong><span>Note</span></div></div><ul className="timeline">{(activity?.recent_activity || []).map((item, idx)=><li key={`${item.type}-${idx}`}><span>{item.label}</span><time>{fmtDate(item.created_at)}</time></li>)}{!activity?.recent_activity?.length && <li>Chưa có hoạt động gần đây.</li>}</ul></section>;
 }
 
-function Preferences({ profile, token, onUpdate, onSuccess, onError }) {
-  const [form, setForm] = useState({ preferred_theme: profile.preferred_theme || 'system', preferred_language: profile.preferred_language || 'vi' });
-  const submit = async (e) => { e.preventDefault(); try { const resp = await api.updatePreferences(form, token); onUpdate(resp.user); onSuccess('Đã lưu tuỳ chọn trải nghiệm.'); } catch (err) { onError(err); } };
-  const labels = useMemo(() => form.preferred_language === 'en' ? { title: 'Experience preferences', theme: 'Theme', lang: 'Language', save: 'Save preferences' } : { title: 'Tuỳ chọn trải nghiệm', theme: 'Giao diện', lang: 'Ngôn ngữ', save: 'Lưu tuỳ chọn' }, [form.preferred_language]);
-  return <form className="card form" onSubmit={submit}><h2>{labels.title}</h2><label>{labels.theme}<select value={form.preferred_theme} onChange={e=>setForm({...form, preferred_theme:e.target.value})}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label>{labels.lang}<select value={form.preferred_language} onChange={e=>setForm({...form, preferred_language:e.target.value})}><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label><p className="muted">Preference được lưu trên hồ sơ. Trang profile đổi label cơ bản; full i18n toàn app cần triển khai riêng.</p><button className="primary">{labels.save}</button></form>;
-}
-
 function DataAccount({ token, onSuccess, onError, logoutContext }) {
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deleteText, setDeleteText] = useState('');
-  const exportData = async () => { try { downloadBlob(await api.exportProfileData(token)); onSuccess('Đã tải file dữ liệu cá nhân.'); } catch (err) { onError(err); } };
+  const exportData = async () => { try { const data = await api.exportProfileData(token); downloadJsonFile(data, `user-data-${new Date().toISOString().slice(0, 10)}.json`); onSuccess('Đã tải file dữ liệu cá nhân.'); } catch { onError(new Error('Không thể tải dữ liệu cá nhân. Vui lòng thử lại.')); } };
   const deactivate = async () => { try { await api.deactivateAccount(token); logoutContext(); window.location.href = '/login'; } catch (err) { onError(err); } };
   const remove = async () => { try { await api.deleteAccount(token); logoutContext(); window.location.href = '/login'; } catch (err) { onError(err); } };
   return <section className="grid two"><div className="card"><h2>Tải dữ liệu cá nhân</h2><p>Xuất JSON gồm hồ sơ, notebooks, tài liệu, phiên nghiên cứu và notes thuộc tài khoản hiện tại.</p><button className="secondary" onClick={exportData}>Tải xuống dữ liệu cá nhân</button></div><div className="card danger-zone"><h2>Danger zone</h2><button className="danger-soft" onClick={()=>setDeactivateOpen(true)}>Vô hiệu hóa tài khoản</button>{deactivateOpen && <div className="confirm"><p>Bạn có chắc muốn vô hiệu hóa tài khoản? Dữ liệu không bị xóa và bạn sẽ được đăng xuất.</p><button className="danger" onClick={deactivate}>Xác nhận vô hiệu hóa</button><button className="secondary" onClick={()=>setDeactivateOpen(false)}>Hủy</button></div>}<div className="divider" /><label>Nhập <strong>XOA TAI KHOAN</strong> để xóa/ẩn danh hồ sơ<input value={deleteText} onChange={e=>setDeleteText(e.target.value)} /></label><button className="danger" disabled={deleteText !== 'XOA TAI KHOAN'} onClick={remove}>Xóa tài khoản vĩnh viễn</button></div></section>;
 }
 
 const styles = `
-.profile-page{padding:28px; color:#2c251c; font-family:'DM Sans',system-ui,sans-serif; max-width:1200px; margin:0 auto}.profile-hero{display:flex;justify-content:space-between;gap:20px;align-items:center;background:linear-gradient(135deg,#fff8ea,#f2dfb6);border:1px solid #ead8ae;border-radius:28px;padding:28px;box-shadow:0 18px 50px rgba(82,61,28,.08)}.eyebrow{letter-spacing:.12em;text-transform:uppercase;color:#9b7640;font-size:12px;font-weight:800}.profile-hero h1{font-family:'Lora',serif;font-size:38px;margin:8px 0}.hero-user{display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.7);border-radius:20px;padding:12px 14px;min-width:260px}.hero-user img,.hero-user span,.avatar-editor img,.avatar-editor span{width:58px;height:58px;border-radius:18px;object-fit:cover;background:#c4a464;color:#1a1510;display:grid;place-items:center;font-weight:800}.hero-user small{display:block;color:#806f5d}.notice{margin:16px 0;padding:13px 16px;border-radius:16px;border:1px solid}.notice.success{background:#ecfdf3;border-color:#b7ebc9;color:#166534}.notice.error{background:#fff1f2;border-color:#fecdd3;color:#9f1239}.profile-tabs{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}.profile-tabs button{border:1px solid #e4d4ad;background:#fffaf0;border-radius:999px;padding:10px 14px;cursor:pointer;color:#6c5634;font-weight:700}.profile-tabs button.active{background:#1d1710;color:#f5db98;border-color:#1d1710}.grid{display:grid;gap:18px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{background:#fffdf8;border:1px solid #eadfca;border-radius:24px;padding:24px;box-shadow:0 18px 44px rgba(66,50,24,.06)}.card h2{font-family:'Lora',serif;margin:0 0 16px}.form{display:grid;gap:14px}.form label,.danger-zone label{display:grid;gap:7px;font-weight:700;color:#5f4a2b}.form input,.form select,.danger-zone input{border:1px solid #dfcfaa;border-radius:12px;padding:11px 12px;background:#fffaf0;color:#2c251c}.form input:disabled{color:#8d806d;background:#f5ead4}.primary,.secondary,.danger,.danger-soft{border:0;border-radius:13px;padding:11px 15px;font-weight:800;cursor:pointer}.primary{background:linear-gradient(135deg,#c4a464,#8a6a30);color:#1a1510}.secondary{background:#f6ead0;color:#624718;border:1px solid #e3c990}.danger{background:#b91c1c;color:white}.danger:disabled{opacity:.45;cursor:not-allowed}.danger-soft{background:#fff1f2;color:#be123c;border:1px solid #fecdd3}.muted{color:#837260;font-size:13px}.avatar-editor{margin:10px 0}.avatar-editor img,.avatar-editor span{width:150px;height:150px;border-radius:36px}.divider{height:1px;background:#eadfca;margin:14px 0}.social-row{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid #eadfca;border-radius:18px;padding:18px}.social-row p{margin:4px 0 0;color:#7c6a55}.stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:20px}.stats div{background:#fff7e7;border:1px solid #ecd9af;border-radius:18px;padding:16px}.stats strong{display:block;font-size:22px}.stats span{font-size:12px;color:#7b6a55}.timeline{display:grid;gap:10px;padding:0;margin:0;list-style:none}.timeline li{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #f0e4cd;padding:10px 0}.timeline time{color:#867761;font-size:12px;white-space:nowrap}.confirm{margin:12px 0;padding:14px;border:1px solid #fecdd3;border-radius:16px;background:#fff7f7;display:grid;gap:10px}@media(max-width:850px){.profile-page{padding:18px}.profile-hero,.hero-user{display:block}.grid.two,.stats{grid-template-columns:1fr}.timeline li{display:block}}`;
+.profile-page{--profile-bg:#0f0d0a;--profile-surface:#17130f;--profile-surface-strong:#1e1912;--profile-border:rgba(255,255,255,.08);--profile-border-strong:rgba(196,164,100,.24);--profile-text:#e7dfd0;--profile-muted:#8a8070;--profile-gold:#c4a464;min-height:100vh;padding:28px;color:var(--profile-text);font-family:'DM Sans',system-ui,sans-serif;max-width:1200px;margin:0 auto;background:radial-gradient(circle at 20% 0%,rgba(196,164,100,.12),transparent 34%),linear-gradient(180deg,rgba(18,15,11,.98),rgba(12,10,8,.98));}.profile-hero{display:flex;justify-content:space-between;gap:20px;align-items:center;background:linear-gradient(135deg,rgba(196,164,100,.12),rgba(255,255,255,.035));border:1px solid var(--profile-border);border-radius:28px;padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.28)}.eyebrow{letter-spacing:.12em;text-transform:uppercase;color:#d6b36a;font-size:12px;font-weight:800}.profile-hero h1{font-family:'Lora',serif;font-size:38px;margin:8px 0;color:#f2eadb}.profile-hero p{color:var(--profile-muted);margin:0}.hero-user{display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.045);border:1px solid var(--profile-border);border-radius:20px;padding:12px 14px;min-width:260px}.hero-user img,.hero-user span,.avatar-editor img,.avatar-editor span{width:58px;height:58px;border-radius:18px;object-fit:cover;background:linear-gradient(135deg,#f2d48b,#a8792f);color:#1a1510;display:grid;place-items:center;font-weight:800}.hero-user small{display:block;color:var(--profile-muted)}.profile-notice{margin:16px 0;padding:13px 14px;border-radius:16px;border:1px solid;display:grid;grid-template-columns:auto 1fr auto;align-items:start;gap:10px;background:rgba(255,255,255,.045);box-shadow:0 18px 44px rgba(0,0,0,.16)}.profile-notice p{margin:2px 0 0;color:inherit}.profile-notice.success{background:rgba(34,197,94,.1);border-color:rgba(74,222,128,.24);color:#bbf7d0}.profile-notice.error{background:rgba(244,63,94,.1);border-color:rgba(251,113,133,.24);color:#fecdd3}.profile-notice.info{background:rgba(59,130,246,.1);border-color:rgba(96,165,250,.24);color:#bfdbfe}.profile-notice.warning{background:rgba(245,158,11,.1);border-color:rgba(251,191,36,.24);color:#fde68a}.profile-notice__icon{width:24px;height:24px;border-radius:999px;display:grid;place-items:center;background:rgba(255,255,255,.08);font-weight:900}.profile-notice__close{border:0;background:transparent;color:currentColor;font-size:22px;line-height:1;cursor:pointer;opacity:.72}.profile-notice__close:hover{opacity:1}.profile-tabs{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}.profile-tabs button{border:1px solid var(--profile-border);background:rgba(255,255,255,.035);border-radius:999px;padding:10px 14px;cursor:pointer;color:#b5aa98;font-weight:700}.profile-tabs button:hover{border-color:var(--profile-border-strong);color:#f2eadb}.profile-tabs button.active{background:linear-gradient(135deg,rgba(196,164,100,.22),rgba(196,164,100,.08));color:#f5db98;border-color:rgba(196,164,100,.35);box-shadow:inset 0 0 0 1px rgba(242,212,139,.08)}.grid{display:grid;gap:18px}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.028));border:1px solid var(--profile-border);border-radius:24px;padding:24px;box-shadow:0 22px 60px rgba(0,0,0,.22);color:var(--profile-text)}.card h2{font-family:'Lora',serif;margin:0 0 16px;color:#f2eadb}.card p{color:#a79b8a}.form{display:grid;gap:14px}.form label,.danger-zone label{display:grid;gap:7px;font-weight:700;color:#cfc5b5}.form input,.form select,.danger-zone input{border:1px solid var(--profile-border);border-radius:12px;padding:11px 12px;background:rgba(10,8,6,.58);color:var(--profile-text);outline:none}.form input:focus,.form select:focus,.danger-zone input:focus{border-color:rgba(196,164,100,.45);box-shadow:0 0 0 3px rgba(196,164,100,.12)}.form input:disabled{color:#7f7567;background:rgba(255,255,255,.035)}.primary,.secondary,.danger,.danger-soft{border:0;border-radius:13px;padding:11px 15px;font-weight:800;cursor:pointer;transition:transform .16s ease,opacity .16s ease,border-color .16s ease}.primary:hover,.secondary:hover,.danger:hover,.danger-soft:hover{transform:translateY(-1px)}.primary{background:linear-gradient(135deg,#f2d48b,#a8792f);color:#17110a}.primary:disabled{opacity:.48;cursor:not-allowed;transform:none}.secondary{background:rgba(196,164,100,.1);color:#e8cb82;border:1px solid rgba(196,164,100,.24)}.danger{background:#b91c1c;color:white}.danger:disabled{opacity:.45;cursor:not-allowed;transform:none}.danger-soft{background:rgba(244,63,94,.1);color:#fda4af;border:1px solid rgba(251,113,133,.22)}.muted{color:var(--profile-muted);font-size:13px}.avatar-card{min-height:440px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px}.avatar-card h2{margin-bottom:2px}.avatar-editor{display:grid;place-items:center}.avatar-editor img,.avatar-editor span{width:190px;height:190px;border-radius:44px;font-size:56px;box-shadow:0 20px 55px rgba(0,0,0,.26)}.avatar-identity{display:grid;gap:4px}.avatar-identity strong{font-size:20px;color:#f2eadb}.avatar-identity small{color:var(--profile-muted)}.avatar-file-button{position:relative;display:inline-flex;align-items:center;justify-content:center;border-radius:13px;padding:10px 14px;background:rgba(255,255,255,.04);border:1px solid var(--profile-border);color:#e8cb82;font-weight:800;cursor:pointer}.avatar-file-button input{position:absolute;inset:0;opacity:0;cursor:pointer}.divider{height:1px;background:var(--profile-border);margin:14px 0}.social-row{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid var(--profile-border);border-radius:18px;padding:18px;background:rgba(255,255,255,.025)}.social-row p{margin:4px 0 0;color:var(--profile-muted)}.stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:20px}.stats div{background:rgba(255,255,255,.035);border:1px solid var(--profile-border);border-radius:18px;padding:16px}.stats strong{display:block;font-size:22px;color:#f2eadb}.stats span{font-size:12px;color:var(--profile-muted)}.timeline{display:grid;gap:10px;padding:0;margin:0;list-style:none}.timeline li{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--profile-border);padding:10px 0;color:#d4cfc8}.timeline time{color:var(--profile-muted);font-size:12px;white-space:nowrap}.confirm{margin:12px 0;padding:14px;border:1px solid rgba(251,113,133,.24);border-radius:16px;background:rgba(244,63,94,.08);display:grid;gap:10px}@media(max-width:850px){.profile-page{padding:18px}.profile-hero,.hero-user{display:block}.hero-user{min-width:0}.grid.two,.stats{grid-template-columns:1fr}.timeline li{display:block}.avatar-card{min-height:360px}.avatar-editor img,.avatar-editor span{width:160px;height:160px;border-radius:36px}}
+`;
