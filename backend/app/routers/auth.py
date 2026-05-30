@@ -18,7 +18,6 @@ from app.dependencies import (
 )
 from app.models.schemas import LoginRequest, RegisterRequest
 from app.services.google_auth_service import verify_google_credential
-from app.services.email_service import is_smtp_configured
 from app.services.internal_jwt_service import create_app_access_token
 from app.services.password_reset_service import (
     GENERIC_RESET_REQUEST_MESSAGE,
@@ -28,7 +27,9 @@ from app.services.password_reset_service import (
     SMTP_NOT_CONFIGURED_MESSAGE,
     create_password_reset_otp,
     is_dev_auth_bypass_enabled,
+    mark_otp_used,
     send_or_allow_dev_otp,
+    verified_password_reset_otp_id,
     verify_password_reset_otp,
 )
 
@@ -810,26 +811,29 @@ def _require_valid_new_password(new_password: str) -> None:
 
 @router.post("/password-reset/request")
 async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str, Any]:
-    if not is_smtp_configured() and not is_dev_auth_bypass_enabled():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "SMTP_NOT_CONFIGURED",
-                "message": SMTP_NOT_CONFIGURED_MESSAGE,
-            },
-        )
-
-    auth_user = _get_reset_auth_user(str(payload.email))
+    normalized_email = str(payload.email).strip().lower()
+    auth_user = _get_reset_auth_user(normalized_email)
 
     if not auth_user:
         return _password_reset_success(GENERIC_RESET_REQUEST_MESSAGE)
 
     try:
-        otp = create_password_reset_otp(str(payload.email))
-        send_or_allow_dev_otp(str(payload.email), otp)
+        otp = create_password_reset_otp(normalized_email)
+    except Exception as exc:
+        print(f"PASSWORD RESET OTP DB INSERT FAILED: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "PASSWORD_RESET_OTP_PERSIST_FAILED",
+                "message": "Không thể tạo mã xác thực. Vui lòng kiểm tra migration password_reset_otps và thử lại sau.",
+            },
+        ) from exc
+
+    try:
+        send_or_allow_dev_otp(normalized_email, otp)
     except Exception as exc:
         message = str(exc)
-        print(f"PASSWORD RESET OTP REQUEST FAILED: {exc}")
+        print(f"PASSWORD RESET OTP DELIVERY FAILED: {exc}")
 
         if SMTP_NOT_CONFIGURED_MESSAGE in message:
             raise HTTPException(
@@ -841,10 +845,10 @@ async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str,
             ) from exc
 
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
-                "code": "PASSWORD_RESET_UNAVAILABLE",
-                "message": "Không thể tạo mã xác thực. Vui lòng thử lại sau.",
+                "code": "PASSWORD_RESET_DELIVERY_FAILED",
+                "message": "Không thể gửi mã xác thực. Vui lòng thử lại sau.",
             },
         ) from exc
 
@@ -891,7 +895,7 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest) -> Dict[s
         )
 
     try:
-        valid, message = verify_password_reset_otp(str(payload.email), otp, mark_used=True)
+        valid, message, otp_id = verified_password_reset_otp_id(str(payload.email), otp)
     except Exception as exc:
         print(f"PASSWORD RESET OTP CONFIRM FAILED: {exc}")
         raise HTTPException(
@@ -921,7 +925,9 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest) -> Dict[s
         }
         if profile.get("auth_provider") == "google":
             profile_updates["auth_provider"] = "google"
-        _ensure_profile(str(user_id), str(payload.email), profile_updates)
+        _ensure_profile(str(user_id), str(payload.email).strip().lower(), profile_updates)
+        if otp_id:
+            mark_otp_used(otp_id)
     except Exception as exc:
         print(f"PASSWORD RESET UPDATE FAILED: {exc}")
         raise HTTPException(
