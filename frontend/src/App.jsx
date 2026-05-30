@@ -12,6 +12,7 @@ import CrossAnalysisPage from './pages/CrossAnalysisPage';
 import AcademicLensPage from './pages/AcademicLensPage';
 import HomePage from './pages/HomePage';
 import ProfilePage from './pages/ProfilePage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
 
 const ProtectedRoute = ({ children }) => {
   const { token, isReady } = useAuth();
@@ -36,6 +37,7 @@ export default function App() {
 
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
           <Route
             element={

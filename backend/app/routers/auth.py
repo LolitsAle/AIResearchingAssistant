@@ -18,7 +18,19 @@ from app.dependencies import (
 )
 from app.models.schemas import LoginRequest, RegisterRequest
 from app.services.google_auth_service import verify_google_credential
+from app.services.email_service import is_smtp_configured
 from app.services.internal_jwt_service import create_app_access_token
+from app.services.password_reset_service import (
+    GENERIC_RESET_REQUEST_MESSAGE,
+    OTP_INVALID_MESSAGE,
+    OTP_VALID_MESSAGE,
+    PASSWORD_UPDATED_MESSAGE,
+    SMTP_NOT_CONFIGURED_MESSAGE,
+    create_password_reset_otp,
+    is_dev_auth_bypass_enabled,
+    send_or_allow_dev_otp,
+    verify_password_reset_otp,
+)
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -30,6 +42,17 @@ class GoogleAuthRequest(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
+
+
+class PasswordResetVerifyRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
 
 
 def _supabase_response_data(resp: Any):
@@ -243,6 +266,7 @@ def _ensure_profile(
         fallback_payload = dict(payload)
         fallback_payload.pop("google_email", None)
         fallback_payload.pop("google_avatar_url", None)
+        fallback_payload.pop("default_password_must_change", None)
 
         if fallback_payload != payload:
             try:
@@ -269,6 +293,12 @@ def _is_dev_admin_login(email: str, password: str) -> bool:
     expected_password = settings.SYSTEM_LIBRARY_ADMIN_PASSWORD or "admin"
 
     return email.strip() == expected_email and password == expected_password
+
+
+def _password_for_new_google_user() -> str:
+    if is_dev_auth_bypass_enabled():
+        return "123456"
+    return secrets.token_urlsafe(32)
 
 
 def _confirm_password_user_email(email: str) -> bool:
@@ -298,13 +328,26 @@ def _confirm_password_user_email(email: str) -> bool:
 
 @router.post("/register")
 async def register(payload: RegisterRequest) -> Dict[str, Any]:
+    if payload.confirm_password is not None and payload.password != payload.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "PASSWORD_CONFIRM_MISMATCH",
+                "message": "Mật khẩu nhập lại không khớp.",
+            },
+        )
+
     try:
         resp = supabase.auth.admin.create_user(
             {
                 "email": payload.email,
                 "password": payload.password,
                 "email_confirm": True,
-                "user_metadata": {"auth_provider": "password"},
+                "user_metadata": {
+                    "auth_provider": "password",
+                    "name": payload.name,
+                    "full_name": payload.name,
+                },
             }
         )
     except Exception as exc:
@@ -371,6 +414,8 @@ async def register(payload: RegisterRequest) -> Dict[str, Any]:
         {
             "password_login_enabled": True,
             "auth_provider": "password",
+            "full_name": payload.name,
+            "display_name": payload.name,
         },
     )
 
@@ -409,12 +454,21 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
             }
         )
     except Exception as exc:
+        message = str(exc)
         print(f"LỖI ĐĂNG NHẬP: {exc}")
+        if any(word in message.lower() for word in ["invalid", "wrong", "credentials", "email not confirmed"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "INVALID_CREDENTIALS",
+                    "message": "Sai email hoặc mật khẩu. Vui lòng thử lại!",
+                },
+            ) from exc
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "code": "INTERNAL_ERROR",
-                "message": "Authentication service error",
+                "code": "AUTH_SERVICE_ERROR",
+                "message": "Không thể đăng nhập. Vui lòng thử lại sau.",
             },
         ) from exc
 
@@ -646,7 +700,7 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
                 created = supabase.auth.admin.create_user(
                     {
                         "email": email,
-                        "password": secrets.token_urlsafe(32),
+                        "password": _password_for_new_google_user(),
                         "email_confirm": True,
                         "user_metadata": {
                             "auth_provider": "google",
@@ -697,7 +751,8 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
                 profile.get("password_login_enabled", False)
             )
             if profile
-            else False,
+            else is_dev_auth_bypass_enabled(),
+            "default_password_must_change": bool(is_dev_auth_bypass_enabled() and not profile),
         },
     )
 
@@ -724,36 +779,162 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
     }
 
 
-@router.post("/request-password-reset")
-async def request_password_reset(payload: PasswordResetRequest) -> Dict[str, Any]:
-    if not (
-        settings.SMTP_HOST
-        and settings.SMTP_USER
-        and settings.SMTP_PASSWORD
-        and settings.SMTP_FROM
-    ):
-        return {
-            "success": True,
-            "data": {
-                "message": "Tính năng gửi email reset cần cấu hình Email SMTP.",
+def _password_reset_success(message: str) -> Dict[str, Any]:
+    return {"success": True, "data": {"message": message}}
+
+
+def _get_reset_auth_user(email: str) -> Any | None:
+    return _auth_user_by_email(str(email))
+
+
+def _require_valid_otp_format(otp: str) -> str:
+    value = str(otp or "").strip()
+    if len(value) != 4 or not value.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
+        )
+    return value
+
+
+def _require_valid_new_password(new_password: str) -> None:
+    if len(new_password or "") < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "PASSWORD_TOO_SHORT",
+                "message": "Mật khẩu phải có ít nhất 6 ký tự.",
             },
-        }
+        )
+
+
+@router.post("/password-reset/request")
+async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str, Any]:
+    if not is_smtp_configured() and not is_dev_auth_bypass_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "SMTP_NOT_CONFIGURED",
+                "message": SMTP_NOT_CONFIGURED_MESSAGE,
+            },
+        )
+
+    auth_user = _get_reset_auth_user(str(payload.email))
+
+    if not auth_user:
+        return _password_reset_success(GENERIC_RESET_REQUEST_MESSAGE)
 
     try:
-        _anon_client().auth.reset_password_email(str(payload.email))
+        otp = create_password_reset_otp(str(payload.email))
+        send_or_allow_dev_otp(str(payload.email), otp)
     except Exception as exc:
-        print(f"PASSWORD RESET FAILED: {exc}")
+        message = str(exc)
+        print(f"PASSWORD RESET OTP REQUEST FAILED: {exc}")
+
+        if SMTP_NOT_CONFIGURED_MESSAGE in message:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": "SMTP_NOT_CONFIGURED",
+                    "message": SMTP_NOT_CONFIGURED_MESSAGE,
+                },
+            ) from exc
+
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "code": "RESET_EMAIL_FAILED",
-                "message": "Không thể gửi email reset mật khẩu.",
+                "code": "PASSWORD_RESET_UNAVAILABLE",
+                "message": "Không thể tạo mã xác thực. Vui lòng thử lại sau.",
             },
         ) from exc
 
-    return {
-        "success": True,
-        "data": {
-            "message": "Nếu email tồn tại, hướng dẫn reset mật khẩu đã được gửi.",
-        },
-    }
+    return _password_reset_success(GENERIC_RESET_REQUEST_MESSAGE)
+
+
+@router.post("/password-reset/verify")
+async def verify_password_reset(payload: PasswordResetVerifyRequest) -> Dict[str, Any]:
+    otp = _require_valid_otp_format(payload.otp)
+    if not _get_reset_auth_user(str(payload.email)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
+        )
+
+    try:
+        valid, message = verify_password_reset_otp(str(payload.email), otp)
+    except Exception as exc:
+        print(f"PASSWORD RESET OTP VERIFY FAILED: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
+        ) from exc
+
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_OTP", "message": message},
+        )
+
+    return _password_reset_success(OTP_VALID_MESSAGE)
+
+
+@router.post("/password-reset/confirm")
+async def confirm_password_reset(payload: PasswordResetConfirmRequest) -> Dict[str, Any]:
+    otp = _require_valid_otp_format(payload.otp)
+    _require_valid_new_password(payload.new_password)
+
+    auth_user = _get_reset_auth_user(str(payload.email))
+    if not auth_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
+        )
+
+    try:
+        valid, message = verify_password_reset_otp(str(payload.email), otp, mark_used=True)
+    except Exception as exc:
+        print(f"PASSWORD RESET OTP CONFIRM FAILED: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
+        ) from exc
+
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_OTP", "message": message},
+        )
+
+    user_id = _auth_user_field(auth_user, "id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "PASSWORD_RESET_FAILED", "message": "Không thể cập nhật mật khẩu."},
+        )
+
+    try:
+        supabase.auth.admin.update_user_by_id(str(user_id), {"password": payload.new_password})
+        profile = _profile_for_user(str(user_id))
+        profile_updates = {
+            "password_login_enabled": True,
+            "default_password_must_change": False,
+        }
+        if profile.get("auth_provider") == "google":
+            profile_updates["auth_provider"] = "google"
+        _ensure_profile(str(user_id), str(payload.email), profile_updates)
+    except Exception as exc:
+        print(f"PASSWORD RESET UPDATE FAILED: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "PASSWORD_RESET_FAILED",
+                "message": "Không thể cập nhật mật khẩu. Vui lòng thử lại sau.",
+            },
+        ) from exc
+
+    return _password_reset_success(PASSWORD_UPDATED_MESSAGE)
+
+
+@router.post("/request-password-reset")
+async def request_password_reset(payload: PasswordResetRequest) -> Dict[str, Any]:
+    return await request_password_reset_otp(payload)

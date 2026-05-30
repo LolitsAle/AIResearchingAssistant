@@ -328,6 +328,10 @@ export default function LoginPage() {
             </button>
           </form>
 
+          <p className="auth-footer" style={{ marginTop: 14 }}>
+            <Link to="/forgot-password">Quên mật khẩu?</Link>
+          </p>
+
           <p className="auth-footer">
             Chưa có tài khoản?{' '}
             <Link to="/register">Đăng ký ngay</Link>
