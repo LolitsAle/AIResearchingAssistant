@@ -386,6 +386,60 @@ export const api = {
       axiosInstance.post("/api/cross-analysis/chat", payload, { headers: authHeader(token) })
     ),
 
+  // ── ACADEMIC LENS ──────────────────────────────────────────────────────
+  uploadAcademicLensDocument: (file, token, onProgress) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/academic-lens/documents/upload", formData, {
+        headers: { ...authHeader(token) },
+        onUploadProgress: (event) => {
+          if (onProgress && event.total) onProgress(Math.round((event.loaded * 100) / event.total));
+        },
+      })
+    );
+  },
+
+  getAcademicLensDocumentPreview: (documentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/academic-lens/documents/${documentId}/preview`, { headers: authHeader(token) })
+    ),
+
+  documentAcademicLensChat: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/academic-lens/document-chat", payload, { headers: authHeader(token) })
+    ),
+
+  webAcademicLensChat: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/academic-lens/web-chat", payload, { headers: authHeader(token) })
+    ),
+
+  visionAcademicLensChat: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/academic-lens/vision-chat", payload, { headers: authHeader(token) })
+    ),
+
+  addAcademicLensWebContext: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/academic-lens/add-web-context", payload, { headers: authHeader(token) })
+    ),
+
+  saveAcademicLensNotepad: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.put("/api/academic-lens/notepad", payload, { headers: authHeader(token) })
+    ),
+
+  clearCrossAnalysisChat: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/cross-analysis/chat/clear", payload, { headers: authHeader(token) })
+    ),
+
+  getCrossAnalysisDocumentPreview: (documentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/cross-analysis/documents/${documentId}/preview`, { headers: authHeader(token) })
+    ),
+
   // ── CHAT ─────────────────────────────────────────────────────────────────
   sendResearchQuery: ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, options = {}) =>
     unwrapRequest(() =>
