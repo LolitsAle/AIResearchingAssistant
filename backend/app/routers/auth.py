@@ -2,6 +2,7 @@
 """Authentication routes using Supabase Auth."""
 
 from typing import Any, Dict
+import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from supabase import create_client, Client
 from app.models.schemas import RegisterRequest, LoginRequest
@@ -10,6 +11,7 @@ from app.dependencies import get_current_user, DEV_ADMIN_TOKEN, _role_from_auth_
 from app.db.supabase_client import supabase
 from app.config import settings
 from app.services.google_auth_service import verify_google_credential
+from app.services.internal_jwt_service import create_app_access_token
 
 # PREFIX khớp với api_contract.md: /api/auth/*
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -63,6 +65,39 @@ def _profile_for_user(user_id: str) -> Dict[str, Any]:
     return {}
 
 
+def _profile_by_google_id(google_id: str) -> Dict[str, Any]:
+    try:
+        resp = supabase.table("profiles").select("*").eq("google_id", google_id).limit(1).execute()
+        rows, error = _supabase_response_data(resp)
+        if not error and rows:
+            return rows[0]
+    except Exception:
+        return {}
+    return {}
+
+
+def _profile_by_email(email: str) -> Dict[str, Any]:
+    try:
+        resp = supabase.table("profiles").select("*").ilike("email", email).limit(1).execute()
+        rows, error = _supabase_response_data(resp)
+        if not error and rows:
+            return rows[0]
+    except Exception:
+        return {}
+    return {}
+
+
+def _auth_user_by_email(email: str) -> Any | None:
+    try:
+        resp = supabase.auth.admin.list_users()
+        for auth_user in _auth_users_from_response(resp):
+            if str(_auth_user_field(auth_user, "email") or "").lower() == email.lower():
+                return auth_user
+    except Exception as exc:
+        print(f"GOOGLE AUTH USER LOOKUP FAILED: {exc}")
+    return None
+
+
 def _ensure_profile(user_id: str, email: str, values: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = {"id": user_id, "email": email, **(values or {})}
     try:
@@ -71,7 +106,18 @@ def _ensure_profile(user_id: str, email: str, values: Dict[str, Any] | None = No
         if not error and rows:
             return rows[0]
     except Exception as exc:
-        print(f"PROFILE UPSERT FAILED: {exc}")
+        if "google_email" in payload or "google_avatar_url" in payload:
+            payload.pop("google_email", None)
+            payload.pop("google_avatar_url", None)
+            try:
+                resp = supabase.table("profiles").upsert(payload, on_conflict="id").execute()
+                rows, error = _supabase_response_data(resp)
+                if not error and rows:
+                    return rows[0]
+            except Exception as retry_exc:
+                print(f"PROFILE UPSERT FAILED: {retry_exc}")
+        else:
+            print(f"PROFILE UPSERT FAILED: {exc}")
     return _profile_for_user(user_id)
 
 
@@ -257,47 +303,73 @@ async def logout(request: Request) -> Dict[str, Any]:
 async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
     claims = verify_google_credential(payload.credential)
     email = claims["email"]
+    google_id = claims["sub"]
 
-    client = _anon_client()
-    try:
-        resp = client.auth.sign_in_with_id_token({"provider": "google", "token": payload.credential})
-    except Exception as exc:
-        print(f"LỖI ĐĂNG NHẬP GOOGLE: {exc}")
+    if not settings.JWT_SECRET_KEY:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "GOOGLE_AUTH_FAILED", "message": "Không thể xác thực Google."},
-        ) from exc
-
-    error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
-    if error:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "GOOGLE_AUTH_FAILED", "message": "Không thể xác thực Google."},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "GOOGLE_APP_JWT_NOT_CONFIGURED",
+                "message": "Google Login cần cấu hình JWT_SECRET_KEY để phát phiên đăng nhập nội bộ.",
+            },
         )
 
-    session = getattr(resp, "session", None) or (resp.get("session") if isinstance(resp, dict) else None)
-    user_obj = getattr(resp, "user", None) or (resp.get("user") if isinstance(resp, dict) else None)
-    if not session or not user_obj:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "GOOGLE_AUTH_FAILED", "message": "Không thể xác thực Google."},
-        )
+    profile = _profile_by_google_id(google_id)
+    if profile:
+        user_id = str(profile["id"])
+        role = str(profile.get("role") or _role_from_profile(user_id) or "user")
+        if profile.get("is_active") is False:
+            raise HTTPException(status_code=403, detail={"code": "ACCOUNT_DISABLED", "message": "Tài khoản đã bị vô hiệu hóa."})
+    else:
+        profile = _profile_by_email(email)
+        auth_user = None
+        if profile:
+            existing_google_id = profile.get("google_id")
+            if existing_google_id and existing_google_id != google_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "GOOGLE_ACCOUNT_CONFLICT", "message": "Email này đang được liên kết với một tài khoản Google khác."},
+                )
+            user_id = str(profile["id"])
+        else:
+            auth_user = _auth_user_by_email(email)
+            if auth_user:
+                user_id = str(_auth_user_field(auth_user, "id"))
+            else:
+                try:
+                    created = supabase.auth.admin.create_user({
+                        "email": email,
+                        "password": secrets.token_urlsafe(32),
+                        "email_confirm": True,
+                        "user_metadata": {"auth_provider": "google", "google_id": google_id},
+                    })
+                    user_obj = getattr(created, "user", None) or (created.get("data", {}) or {}).get("user") if isinstance(created, dict) else None
+                    user_id = str(_auth_user_field(user_obj, "id"))
+                    if not user_id or user_id == "None":
+                        raise RuntimeError("Supabase did not return a user id")
+                except Exception as exc:
+                    print(f"GOOGLE USER CREATE FAILED: {exc}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail={"code": "GOOGLE_USER_CREATE_FAILED", "message": "Không thể tạo tài khoản Google."},
+                    ) from exc
+        profile = _ensure_profile(user_id, email, {
+            "full_name": claims.get("name"),
+            "display_name": claims.get("given_name") or claims.get("name"),
+            "avatar_url": claims.get("picture"),
+            "google_id": google_id,
+            "google_email": email,
+            "google_avatar_url": claims.get("picture"),
+            "auth_provider": "google",
+            "is_active": True,
+            "password_login_enabled": bool(profile.get("password_login_enabled", False)) if profile else False,
+        })
+        role = str(profile.get("role") or _role_from_profile(user_id) or "user")
+        if profile.get("is_active") is False:
+            raise HTTPException(status_code=403, detail={"code": "ACCOUNT_DISABLED", "message": "Tài khoản đã bị vô hiệu hóa."})
 
-    access_token = getattr(session, "access_token", None) or (session.get("access_token") if isinstance(session, dict) else None)
-    user_id = getattr(user_obj, "id", None) or (user_obj.get("id") if isinstance(user_obj, dict) else None)
-    role = _role_from_auth_user(user_obj) or _role_from_profile(str(user_id)) or "user"
-    profile = _ensure_profile(str(user_id), email, {
-        "full_name": claims.get("name"),
-        "display_name": claims.get("given_name") or claims.get("name"),
-        "avatar_url": claims.get("picture"),
-        "google_id": claims.get("sub"),
-        "auth_provider": "google",
-        "is_active": True,
-    })
-    if profile.get("is_active") is False:
-        raise HTTPException(status_code=403, detail={"code": "ACCOUNT_DISABLED", "message": "Tài khoản đã bị vô hiệu hóa."})
-
-    return {"success": True, "data": {"access_token": access_token, "token_type": "bearer", "user": _user_payload(str(user_id), email, role, profile)}}
+    access_token = create_app_access_token(user_id=user_id, email=email, role=role)
+    return {"success": True, "data": {"access_token": access_token, "token_type": "bearer", "user": _user_payload(user_id, email, role, profile)}}
 
 
 @router.post("/request-password-reset")
