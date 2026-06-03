@@ -1,4 +1,5 @@
-import { X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Search, X } from 'lucide-react';
 
 const FILTERS = {
   peer_review_status: [
@@ -22,6 +23,8 @@ const FILTERS = {
   ],
 };
 
+const VISIBLE_TAG_LIMIT = 8;
+
 function FilterGroup({ title, options, value, onToggle }) {
   return (
     <div className="sl-filter-group">
@@ -41,12 +44,68 @@ function FilterGroup({ title, options, value, onToggle }) {
   );
 }
 
+function TagChip({ tag, count, selected, onToggle }) {
+  return (
+    <button
+      type="button"
+      className={`sl-filter-chip ${selected ? 'is-active' : ''}`}
+      onClick={() => onToggle(tag)}
+    >
+      #{tag} <span>({count})</span>
+    </button>
+  );
+}
+
+function TagPickerModal({ tags, selectedTags, query, onQueryChange, onToggleTag, onClose }) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredTags = normalizedQuery
+    ? tags.filter(({ tag }) => tag.toLowerCase().includes(normalizedQuery))
+    : tags;
+
+  return (
+    <div className="sl-modal-overlay" role="presentation" onClick={onClose}>
+      <section className="sl-modal sl-tag-modal" role="dialog" aria-modal="true" aria-label="Tất cả tag gợi ý" onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="sl-modal__close" onClick={onClose} aria-label="Đóng danh sách tag"><X size={18} /></button>
+        <header className="sl-modal__header">
+          <div>
+            <p>Tags gợi ý</p>
+            <h2>Tất cả tag</h2>
+          </div>
+        </header>
+        <div className="sl-modal__content">
+          <label className="sl-tag-modal__search">
+            <Search size={17} />
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="Tìm tag theo tên..."
+              autoFocus
+            />
+          </label>
+          <div className="sl-tag-modal__summary">
+            <span>{filteredTags.length} tag phù hợp</span>
+            {selectedTags.length > 0 && <strong>{selectedTags.length} tag đang lọc</strong>}
+          </div>
+          <div className="sl-tag-modal__grid">
+            {filteredTags.length ? filteredTags.map(({ tag, count }) => (
+              <TagChip key={tag} tag={tag} count={count} selected={selectedTags.includes(tag)} onToggle={onToggleTag} />
+            )) : <span className="sl-modal__muted">Không tìm thấy tag phù hợp.</span>}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function SystemLibraryFilters({ filters, selectedTags, suggestedTags = [], loading, onToggleFilter, onToggleTag, onBooleanFilter, onCitationChange, onClear }) {
+  const [showAllTags, setShowAllTags] = useState(false);
+  const [tagQuery, setTagQuery] = useState('');
   const hasFilters = Object.entries(filters).some(([key, value]) => {
     if (key === 'sort') return false;
     if (key === 'citation_count_min') return Boolean(filters.citation_count_enabled) && value !== '';
     return Array.isArray(value) ? value.length > 0 : Boolean(value);
   }) || selectedTags.length > 0;
+  const visibleTags = useMemo(() => suggestedTags.slice(0, VISIBLE_TAG_LIMIT), [suggestedTags]);
 
   return (
     <aside className="sl-filters" aria-label="Bộ lọc thư viện tài liệu">
@@ -56,10 +115,17 @@ export default function SystemLibraryFilters({ filters, selectedTags, suggestedT
       </div>
       {loading && <div className="sl-filter-skeleton" aria-live="polite">Đang lọc/search tài liệu...</div>}
       <div className="sl-filter-group">
-        <h3>Tags gợi ý</h3>
+        <div className="sl-filter-group__title-row">
+          <h3>Tags gợi ý</h3>
+          {suggestedTags.length > VISIBLE_TAG_LIMIT && (
+            <button type="button" className="sl-link-button" onClick={() => setShowAllTags(true)}>
+              Xem thêm ({suggestedTags.length})
+            </button>
+          )}
+        </div>
         <div className="sl-filter-options">
-          {suggestedTags.length ? suggestedTags.map(({ tag, count }) => (
-            <button key={tag} type="button" className={`sl-filter-chip ${selectedTags.includes(tag) ? 'is-active' : ''}`} onClick={() => onToggleTag(tag)}>#{tag} <span>({count})</span></button>
+          {visibleTags.length ? visibleTags.map(({ tag, count }) => (
+            <TagChip key={tag} tag={tag} count={count} selected={selectedTags.includes(tag)} onToggle={onToggleTag} />
           )) : <span className="sl-modal__muted">Chưa có tag gợi ý</span>}
         </div>
       </div>
@@ -70,7 +136,7 @@ export default function SystemLibraryFilters({ filters, selectedTags, suggestedT
       <FilterGroup title="Kiểu truy cập" options={FILTERS.access_types} value={filters.access_types} onToggle={(value) => onToggleFilter('access_types', value)} />
       <FilterGroup title="Loại bài viết" options={FILTERS.review_types} value={filters.review_types} onToggle={(value) => onToggleFilter('review_types', value)} />
       <div className="sl-filter-group"><h3>Tệp / tài nguyên</h3><div className="sl-filter-options">
-        {[['has_pdf', 'Có PDF'], ['has_data', 'Có dữ liệu'], ['has_code', 'Có mã nguồn']].map(([key, label]) => <button key={key} type="button" className={`sl-filter-chip ${filters[key] ? 'is-active' : ''}`} onClick={() => onBooleanFilter(key)}>{label}</button>)}
+        {[["has_pdf", "Có PDF"], ["has_data", "Có dữ liệu"], ["has_code", "Có mã nguồn"]].map(([key, label]) => <button key={key} type="button" className={`sl-filter-chip ${filters[key] ? 'is-active' : ''}`} onClick={() => onBooleanFilter(key)}>{label}</button>)}
       </div></div>
       <div className="sl-filter-group sl-citation-filter">
         <h3>Lọc theo số trích dẫn</h3>
@@ -92,6 +158,16 @@ export default function SystemLibraryFilters({ filters, selectedTags, suggestedT
         <p className="sl-modal__muted">Khi bật, chỉ hiển thị tài liệu có số trích dẫn lớn hơn hoặc bằng ngưỡng đã chọn.</p>
       </div>
       <div className="sl-filter-group"><h3>Bộ lọc AI (đã chuẩn bị schema)</h3><p className="sl-modal__muted">Phương pháp nghiên cứu, độ dễ đọc, thời gian đọc, bằng chứng thực nghiệm và lập trường sẽ được bật khi có dữ liệu AI; lập trường chỉ dùng khi có giả thuyết.</p></div>
+      {showAllTags && (
+        <TagPickerModal
+          tags={suggestedTags}
+          selectedTags={selectedTags}
+          query={tagQuery}
+          onQueryChange={setTagQuery}
+          onToggleTag={onToggleTag}
+          onClose={() => setShowAllTags(false)}
+        />
+      )}
     </aside>
   );
 }

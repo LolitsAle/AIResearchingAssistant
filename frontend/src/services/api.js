@@ -431,8 +431,8 @@ export const api = {
       axiosInstance.get("/api/system-library/bookmarks", { headers: authHeader(token) })
     ),
 
-  getSystemLibraryTags: (token) =>
-    unwrapRequest(() => axiosInstance.get("/api/system-library/tags", { headers: authHeader(token) })),
+  getSystemLibraryTags: (token, limit = 200) =>
+    unwrapRequest(() => axiosInstance.get("/api/system-library/tags", { params: { limit }, headers: authHeader(token) })),
 
   uploadCommunityLibraryDocument: (payload, token, onProgress) => {
     const formData = new FormData();

@@ -25,7 +25,10 @@ const formatRating = (value) => {
 function StarRating({ averageRating, myRating, onRate, isSubmitting }) {
   const [hovered, setHovered] = useState(0);
   const numericAverage = Number(averageRating);
-  const litStars = hovered || (Number.isFinite(numericAverage) && numericAverage > 0 ? Math.max(0, Math.min(5, Math.round(numericAverage))) : 0);
+  const numericMine = Number(myRating);
+  const selectedRating = Number.isFinite(numericMine) && numericMine > 0 ? numericMine : 0;
+  const averageStars = Number.isFinite(numericAverage) && numericAverage > 0 ? Math.max(0, Math.min(5, Math.round(numericAverage))) : 0;
+  const litStars = hovered || selectedRating || averageStars;
 
   return (
     <div className="sl-rating__stars" onMouseLeave={() => setHovered(0)}>
@@ -40,8 +43,8 @@ function StarRating({ averageRating, myRating, onRate, isSubmitting }) {
             onMouseEnter={() => setHovered(star)}
             onFocus={() => setHovered(star)}
             onBlur={() => setHovered(0)}
-            onClick={() => onRate(star)}
-            disabled={isSubmitting}
+            onClick={() => onRate?.(star)}
+            disabled={isSubmitting || !onRate}
             aria-label={`Đánh giá ${star} sao`}
             title={`Đánh giá ${star}/5`}
           >
@@ -55,8 +58,8 @@ function StarRating({ averageRating, myRating, onRate, isSubmitting }) {
 
 function DocumentRatingSection({ rating, onRate, loading, submitting, error }) {
   const averageRating = rating?.average_rating ?? rating?.vote_avg ?? 0;
-  const ratingCount = Number(rating?.rating_count ?? rating?.vote_count ?? 0);
-  const myRating = rating?.my_rating ?? null;
+  const ratingCount = Math.max(0, Number(rating?.rating_count ?? rating?.vote_count ?? 0) || 0);
+  const myRating = rating?.my_rating ?? rating?.rating ?? null;
 
   return (
     <section className={`sl-modal__section sl-rating-section ${submitting ? 'is-loading' : ''}`}>
@@ -67,19 +70,13 @@ function DocumentRatingSection({ rating, onRate, loading, submitting, error }) {
         </div>
         {(loading || submitting) && <span className="sl-rating__loading"><Loader2 size={16} /> {submitting ? 'Đang lưu...' : 'Đang tải...'}</span>}
       </div>
-      <div className="sl-rating">
-        <StarRating averageRating={averageRating} myRating={myRating} onRate={onRate} isSubmitting={submitting || loading} />
+      <div className="sl-rating" aria-live="polite">
+        <StarRating averageRating={averageRating} myRating={myRating} onRate={onRate} isSubmitting={submitting} />
         <div className="sl-rating__summary">
-          {ratingCount > 0 ? (
-            <>
-              <strong>Điểm trung bình: {formatRating(averageRating)}</strong>
-              <span>{ratingCount} lượt đánh giá</span>
-            </>
-          ) : (
-            <strong>Chưa có đánh giá</strong>
-          )}
+          <strong>Điểm trung bình: {formatRating(averageRating)}</strong>
+          <span>{ratingCount} lượt đánh giá</span>
           <span className={myRating ? 'sl-rating__mine is-rated' : 'sl-rating__mine'}>
-            {myRating ? `Bạn đã đánh giá: ${myRating}/5` : 'Bạn chưa đánh giá tài liệu này'}
+            {myRating ? `Bạn đã đánh giá: ${myRating}/5 sao` : 'Bấm vào sao để đánh giá tài liệu này'}
           </span>
         </div>
       </div>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
@@ -109,9 +109,9 @@ async def download_document(document_id: str, user: dict = Depends(get_current_u
 
 
 @router.get("/tags", response_model=dict)
-async def list_tags(user: dict = Depends(get_current_user)):
+async def list_tags(limit: int = Query(default=200, ge=1, le=500), user: dict = Depends(get_current_user)):
     _ = user
-    return {"success": True, "data": list_top_library_tags()}
+    return {"success": True, "data": list_top_library_tags(limit=limit)}
 
 
 @router.post("/documents/upload", response_model=dict)
