@@ -87,7 +87,7 @@ const STYLES = `
   .sl-modal-overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 18px; background: rgba(0,0,0,.62); }
   .sl-tag-modal-overlay { z-index: 90; }
   .sl-modal { width: min(760px, 100%); max-height: min(86vh, 820px); display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.12); border-radius: 26px; background: #18140f; color: #efe6d8; box-shadow: 0 30px 110px rgba(0,0,0,.55); position: relative; }
-  .sl-modal__close { position: absolute; top: 14px; right: 14px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #efe6d8; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; }
+  .sl-modal__close { position: absolute; top: 14px; right: 14px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #efe6d8; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; display: flex; justify-content: center; align-items: center;}
   .sl-modal__header { display: flex; gap: 14px; padding: 24px 26px 12px; }
   .sl-modal__header p { margin: 0 0 4px; color: #d4b66f; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
   .sl-modal__header h2 { margin: 0; font-size: clamp(22px, 4vw, 34px); }
