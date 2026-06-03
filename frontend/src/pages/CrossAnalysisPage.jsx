@@ -59,7 +59,13 @@ const STYLES = `
   .ca-btn.danger { color:#ffb4a8; }
   .ca-btn:disabled { opacity:.45; cursor:not-allowed; }
   .ca-warning { margin-top: 12px; border: 1px solid rgba(224,120,120,.24); background: rgba(224,120,120,.08); color:#f0b5aa; border-radius: 15px; padding: 11px 13px; display:flex; gap:8px; align-items:flex-start; }
-  .ca-criteria { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:10px; margin-top:14px; }
+  .ca-collapse-text { margin: 10px 0 0; }
+  .ca-collapse-text__body { margin:0; }
+  .ca-link-btn { border:0; background:transparent; color:#f2d48b; padding:4px 0; font-weight:800; cursor:pointer; }
+  .ca-selected-criteria { margin-top:14px; border:1px solid rgba(212,182,111,.18); background:rgba(212,182,111,.07); border-radius:16px; padding:12px; }
+  .ca-selected-criteria ul { display:flex; flex-wrap:wrap; gap:8px; padding:0; margin:8px 0 0; list-style:none; }
+  .ca-selected-criteria li { border:1px solid rgba(255,255,255,.08); border-radius:999px; padding:6px 10px; background:rgba(0,0,0,.16); color:#d8cfc0; font-size:12px; }
+  .ca-criteria { display:grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: repeat(4, auto); gap:10px; margin-top:14px; }
   .ca-criterion { display:flex; gap:10px; align-items:flex-start; padding: 12px; border-radius:16px; border:1px solid rgba(255,255,255,.08); background:rgba(0,0,0,.14); cursor:pointer; }
   .ca-criterion input { margin-top:3px; accent-color:#d4b66f; }
   .ca-criterion strong { display:block; color:#f0e5d5; font-size:13px; }
@@ -122,9 +128,12 @@ const STYLES = `
   .ca-quick-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
   .ca-sessions { margin-top:14px; border-top:1px solid rgba(255,255,255,.08); padding-top:12px; }
   .ca-session-list { display:grid; gap:8px; margin-top:8px; }
+  .ca-session-row { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:stretch; }
   .ca-session { text-align:left; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.035); color:#d8cfc0; border-radius:12px; padding:9px; cursor:pointer; }
+  .ca-session-delete { padding:9px 11px; border-radius:12px; }
   .ca-chat-context { margin:0 0 10px; border:1px solid rgba(212,182,111,.25); background:rgba(212,182,111,.08); color:#f2d48b; border-radius:14px; padding:10px; display:flex; justify-content:space-between; gap:10px; }
-  @media (max-width: 900px) { .ca-picker-grid, .ca-split, .ca-evidence-grid { grid-template-columns: 1fr; } .ca-chat-form { grid-template-columns: 1fr; } }
+  @media (max-width: 1100px) { .ca-criteria { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows:auto; } }
+  @media (max-width: 900px) { .ca-picker-grid, .ca-split, .ca-evidence-grid { grid-template-columns: 1fr; } .ca-chat-form { grid-template-columns: 1fr; } .ca-criteria { grid-template-columns: 1fr; } .ca-session-row { grid-template-columns: 1fr; } }
 `;
 
 function sourceLabel(doc) {
@@ -217,6 +226,67 @@ function toDocumentRef(doc) {
   return { id: doc.id, source_type: doc.source_type, title: doc.title, filename: doc.filename, file_type: doc.file_type };
 }
 
+const CROSS_ANALYSIS_DRAFT_KEY = 'cross-analysis-current-draft-v1';
+let crossAnalysisMemoryDraft = null;
+
+function stripVolatileDocumentFields(doc) {
+  if (!doc) return null;
+  const { preview_url: _previewUrl, preview_url_owner: _previewUrlOwner, mime_type: _mimeType, ...rest } = doc;
+  return rest;
+}
+
+function createSessionTitle(documentA, documentB) {
+  return `${documentA?.title || documentA?.filename || 'A'} ↔ ${documentB?.title || documentB?.filename || 'B'}`;
+}
+
+function buildCrossAnalysisSessionBody({ documentA, documentB, selectedPreset, selectedCriteria, comparisonResult, chatMessages }) {
+  return {
+    title: createSessionTitle(documentA, documentB),
+    document_a_ref: toDocumentRef(documentA),
+    document_b_ref: toDocumentRef(documentB),
+    selected_preset: selectedPreset,
+    selected_criteria: selectedCriteria,
+    comparison_result: comparisonResult,
+    chat_history: chatMessages,
+  };
+}
+
+function hasCrossAnalysisDraftContent(draft) {
+  return Boolean(draft?.documentA || draft?.documentB || draft?.comparisonResult || draft?.chatMessages?.length);
+}
+
+function sanitizeCrossAnalysisDraft(draft) {
+  if (!draft) return null;
+  return {
+    ...draft,
+    documentA: stripVolatileDocumentFields(draft.documentA),
+    documentB: stripVolatileDocumentFields(draft.documentB),
+  };
+}
+
+function loadStoredCrossAnalysisDraft() {
+  if (crossAnalysisMemoryDraft) return crossAnalysisMemoryDraft;
+  try {
+    const raw = window.sessionStorage.getItem(CROSS_ANALYSIS_DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeCrossAnalysisDraft(draft) {
+  crossAnalysisMemoryDraft = draft;
+  try {
+    if (hasCrossAnalysisDraftContent(draft)) {
+      window.sessionStorage.setItem(CROSS_ANALYSIS_DRAFT_KEY, JSON.stringify(sanitizeCrossAnalysisDraft(draft)));
+    } else {
+      window.sessionStorage.removeItem(CROSS_ANALYSIS_DRAFT_KEY);
+    }
+  } catch {
+    // Session persistence is best-effort; keep the in-memory draft for same-tab navigation.
+  }
+}
+
 function sameDocument(a, b) {
   return Boolean(a && b && a.source_type === b.source_type && String(a.id) === String(b.id));
 }
@@ -292,6 +362,25 @@ function downloadMarkdown(result, rows) {
   URL.revokeObjectURL(url);
 }
 
+
+function CollapsibleText({ children, limit = 260, className = 'ca-muted', label = 'nội dung' }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = String(children || '').trim();
+  if (!text) return null;
+  const shouldCollapse = text.length > limit;
+  const visibleText = shouldCollapse && !expanded ? `${text.slice(0, limit).trim()}…` : text;
+  return (
+    <div className="ca-collapse-text">
+      <p className={`${className} ca-collapse-text__body`}>{visibleText}</p>
+      {shouldCollapse && (
+        <button className="ca-link-btn" type="button" onClick={() => setExpanded((current) => !current)}>
+          {expanded ? `Thu gọn ${label}` : `Xem thêm ${label}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function DocumentSlot({ label, document, onUpload, onOpenLibrary, onClear, uploading }) {
   const inputRef = useRef(null);
   return (
@@ -305,8 +394,13 @@ function DocumentSlot({ label, document, onUpload, onOpenLibrary, onClear, uploa
           <>
             <h3 className="ca-doc-title">{document.title || document.filename}</h3>
             <p className="ca-muted">{sourceLabel(document)} · {document.file_type || 'FILE'} · {document.status || (document.is_vector_ready ? 'RAG ready' : 'Đã chọn')}</p>
-            {document.summary && <p className="ca-muted">{document.summary}</p>}
-            {Boolean(document.snippets?.length) && <p className="ca-muted"><b>Preview:</b> {document.snippets[0].content}</p>}
+            {document.summary && <CollapsibleText label="tóm tắt">{document.summary}</CollapsibleText>}
+            {Boolean(document.snippets?.length) && (
+              <div className="ca-muted">
+                <b>Preview:</b>
+                <CollapsibleText label="preview" limit={220}>{document.snippets[0].content}</CollapsibleText>
+              </div>
+            )}
           </>
         ) : (
           <p className="ca-muted" style={{ marginTop: 16 }}>Upload file từ máy hoặc chọn tài liệu đã chuẩn hóa trong Thư viện Hệ thống.</p>
@@ -592,20 +686,22 @@ function DocumentPreviewPanel({ label, document }) {
   );
 }
 
+
 export default function CrossAnalysisPage() {
   const { token } = useAuth();
-  const [documentA, setDocumentA] = useState(null);
-  const [documentB, setDocumentB] = useState(null);
-  const [selectedPreset, setSelectedPreset] = useState('academic');
-  const [selectedCriteria, setSelectedCriteria] = useState(PRESETS[0].criteria);
+  const initialDraft = loadStoredCrossAnalysisDraft();
+  const [documentA, setDocumentA] = useState(initialDraft?.documentA || null);
+  const [documentB, setDocumentB] = useState(initialDraft?.documentB || null);
+  const [selectedPreset, setSelectedPreset] = useState(initialDraft?.selectedPreset || 'academic');
+  const [selectedCriteria, setSelectedCriteria] = useState(initialDraft?.selectedCriteria || PRESETS[0].criteria);
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortMode, setSortMode] = useState('default');
   const [selectedRowForChat, setSelectedRowForChat] = useState(null);
   const [sessions, setSessions] = useState([]);
-  const [currentSessionId, setCurrentSessionId] = useState(null);
-  const [comparisonResult, setComparisonResult] = useState(null);
+  const [currentSessionId, setCurrentSessionId] = useState(initialDraft?.currentSessionId || null);
+  const [comparisonResult, setComparisonResult] = useState(initialDraft?.comparisonResult || null);
   const [quickResult, setQuickResult] = useState(null);
-  const [chatMessages, setChatMessages] = useState([]);
+  const [chatMessages, setChatMessages] = useState(initialDraft?.chatMessages || []);
   const [chatInput, setChatInput] = useState('');
   const [activeSlot, setActiveSlot] = useState(null);
   const [loading, setLoading] = useState('');
@@ -624,11 +720,6 @@ export default function CrossAnalysisPage() {
     });
   };
 
-  useEffect(() => () => {
-    previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-    previewUrlsRef.current.clear();
-  }, []);
-
   const tableRows = useMemo(() => {
     const base = (comparisonResult?.comparison_table || []).map((row, index) => ({ ...row, criterion_display: mapCriterionLabel(row.criterion, row.criterion_label), original_index: index }));
     const filtered = statusFilter === 'all' ? base : base.filter((row) => row.status === statusFilter);
@@ -641,6 +732,42 @@ export default function CrossAnalysisPage() {
   const canAnalyze = documentA && documentB && !sameDocument(documentA, documentB);
   const sameWarning = sameDocument(documentA, documentB) ? 'Vui lòng chọn hai tài liệu khác nhau để so sánh.' : '';
   const payload = useMemo(() => ({ document_a: toDocumentRef(documentA), document_b: toDocumentRef(documentB) }), [documentA, documentB]);
+  const currentDraft = useMemo(() => ({
+    documentA,
+    documentB,
+    selectedPreset,
+    selectedCriteria,
+    currentSessionId,
+    comparisonResult,
+    chatMessages,
+  }), [documentA, documentB, selectedPreset, selectedCriteria, currentSessionId, comparisonResult, chatMessages]);
+  const hasDraftContent = hasCrossAnalysisDraftContent(currentDraft);
+
+  useEffect(() => {
+    storeCrossAnalysisDraft(currentDraft);
+  }, [currentDraft]);
+
+  useEffect(() => {
+    if (!token || !hasDraftContent) return () => {};
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      const body = buildCrossAnalysisSessionBody({ documentA, documentB, selectedPreset, selectedCriteria, comparisonResult, chatMessages });
+      try {
+        const saved = currentSessionId
+          ? await api.updateCrossAnalysisSession(currentSessionId, body, token)
+          : await api.createCrossAnalysisSession(body, token);
+        if (cancelled || !saved) return;
+        setCurrentSessionId(saved.id || currentSessionId);
+        setSessions((current) => [saved, ...current.filter((item) => item.id !== saved.id)].filter(Boolean).slice(0, 30));
+      } catch {
+        // Auto-save is best-effort; the same-tab/sessionStorage draft still restores the open page state.
+      }
+    }, 900);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [token, hasDraftContent, currentSessionId, documentA, documentB, selectedPreset, selectedCriteria, comparisonResult, chatMessages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -684,8 +811,9 @@ export default function CrossAnalysisPage() {
       const result = await api.compareCrossAnalysisDocuments({ ...payload, criteria: selectedCriteria }, token);
       setComparisonResult(result);
       try {
-        const saved = await api.createCrossAnalysisSession({ title: `${documentA?.title || documentA?.filename || 'A'} ↔ ${documentB?.title || documentB?.filename || 'B'}`, document_a_ref: toDocumentRef(documentA), document_b_ref: toDocumentRef(documentB), selected_preset: selectedPreset, selected_criteria: selectedCriteria, comparison_result: result, chat_history: chatMessages }, token);
-        setCurrentSessionId(saved?.id || null);
+        const body = buildCrossAnalysisSessionBody({ documentA, documentB, selectedPreset, selectedCriteria, comparisonResult: result, chatMessages });
+        const saved = currentSessionId ? await api.updateCrossAnalysisSession(currentSessionId, body, token) : await api.createCrossAnalysisSession(body, token);
+        setCurrentSessionId(saved?.id || currentSessionId || null);
         setSessions((current) => [saved, ...current.filter((item) => item.id !== saved?.id)].filter(Boolean).slice(0, 30));
       } catch {}
     } catch (err) {
@@ -742,10 +870,10 @@ export default function CrossAnalysisPage() {
   };
 
   const saveSession = async () => {
-    if (!comparisonResult) return;
+    if (!hasDraftContent) return;
     setLoading('session');
     try {
-      const body = { title: `${documentA?.title || documentA?.filename || 'A'} ↔ ${documentB?.title || documentB?.filename || 'B'}`, document_a_ref: toDocumentRef(documentA), document_b_ref: toDocumentRef(documentB), selected_preset: selectedPreset, selected_criteria: selectedCriteria, comparison_result: comparisonResult, chat_history: chatMessages };
+      const body = buildCrossAnalysisSessionBody({ documentA, documentB, selectedPreset, selectedCriteria, comparisonResult, chatMessages });
       const saved = currentSessionId ? await api.updateCrossAnalysisSession(currentSessionId, body, token) : await api.createCrossAnalysisSession(body, token);
       setCurrentSessionId(saved?.id || currentSessionId);
       setSessions((current) => [saved, ...current.filter((item) => item.id !== saved?.id)].filter(Boolean).slice(0, 30));
@@ -758,12 +886,35 @@ export default function CrossAnalysisPage() {
 
   const openSession = (session) => {
     setCurrentSessionId(session.id);
-    setDocumentA(session.document_a_ref || null);
-    setDocumentB(session.document_b_ref || null);
+    setDocumentForSlot('A', session.document_a_ref || null);
+    setDocumentForSlot('B', session.document_b_ref || null);
     setSelectedPreset(session.selected_preset || 'custom');
     setSelectedCriteria(session.selected_criteria || []);
     setComparisonResult(session.comparison_result || null);
     setChatMessages(session.chat_history || []);
+  };
+
+  const deleteSession = async (sessionId) => {
+    if (!sessionId) return;
+    if (!window.confirm('Bạn có chắc muốn xoá phiên so sánh này không?')) return;
+    setLoading(`delete-session-${sessionId}`);
+    setError('');
+    try {
+      await api.deleteCrossAnalysisSession(sessionId, token);
+      setSessions((current) => current.filter((session) => session.id !== sessionId));
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId(null);
+        setDocumentForSlot('A', null);
+        setDocumentForSlot('B', null);
+        setComparisonResult(null);
+        setChatMessages([]);
+        setQuickResult(null);
+      }
+    } catch (err) {
+      setError(err.message || 'Không thể xoá phiên so sánh.');
+    } finally {
+      setLoading('');
+    }
   };
 
   return (
@@ -788,14 +939,22 @@ export default function CrossAnalysisPage() {
             </button>
           ))}
         </div>
-        <div className="ca-criteria">
-          {CRITERIA.map((criterion) => (
-            <label key={criterion.key} className="ca-criterion" title={criterion.hint}>
-              <input type="checkbox" checked={selectedCriteria.includes(criterion.key)} onChange={() => { setSelectedPreset('custom'); setSelectedCriteria((current) => current.includes(criterion.key) ? current.filter((key) => key !== criterion.key) : [...current, criterion.key]); }} />
-              <span><strong>{criterion.label}</strong><span>{criterion.hint}</span></span>
-            </label>
-          ))}
-        </div>
+        {selectedPreset === 'custom' ? (
+          <div className="ca-criteria" aria-label="Chọn tiêu chí custom theo lưới 4 hàng x 5 cột">
+            {CRITERIA.map((criterion) => (
+              <label key={criterion.key} className="ca-criterion" title={criterion.hint}>
+                <input type="checkbox" checked={selectedCriteria.includes(criterion.key)} onChange={() => { setSelectedPreset('custom'); setSelectedCriteria((current) => current.includes(criterion.key) ? current.filter((key) => key !== criterion.key) : [...current, criterion.key]); }} />
+                <span><strong>{criterion.label}</strong><span>{criterion.hint}</span></span>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <div className="ca-selected-criteria">
+            <strong>Tiêu chí đang dùng</strong>
+            <p className="ca-muted">Chọn “Custom” nếu muốn hiển thị toàn bộ 20 tiêu chí và tick thủ công.</p>
+            <ul>{selectedCriteria.map((key) => <li key={key}>{mapCriterionLabel(key)}</li>)}</ul>
+          </div>
+        )}
         {(error || sameWarning) && <div className="ca-warning"><AlertTriangle size={17} /> {error || sameWarning}</div>}
         <div className="ca-actions">
           <button className="ca-btn primary" type="button" disabled={!canAnalyze || loading === 'compare'} onClick={analyze}>{loading === 'compare' ? <Loader2 size={17} /> : <GitCompare size={17} />} Phân tích</button>
@@ -808,7 +967,7 @@ export default function CrossAnalysisPage() {
         <div className="ca-toolbar">
           <h2 className="ca-section-title"><CheckCircle2 size={20} /> 2. Bảng đối chiếu có bằng chứng</h2>
           <div className="ca-actions" style={{ marginTop: 0 }}>
-            <button className="ca-btn" type="button" disabled={!comparisonResult} onClick={saveSession}><Save size={16} /> Lưu phiên</button>
+            <button className="ca-btn" type="button" disabled={!hasDraftContent} onClick={saveSession}><Save size={16} /> Lưu phiên</button>
             <button className="ca-btn" type="button" disabled={!tableRows.length} onClick={() => downloadCsv(tableRows)}><Download size={16} /> Xuất CSV</button>
             <button className="ca-btn" type="button" disabled={!comparisonResult} onClick={() => downloadMarkdown(comparisonResult, comparisonResult?.comparison_table || [])}><Download size={16} /> Xuất Markdown</button>
             <button className="ca-btn" type="button" disabled title="Xuất DOCX sẽ được bổ sung sau."><Download size={16} /> DOCX</button>
@@ -823,7 +982,21 @@ export default function CrossAnalysisPage() {
         </div>
         <ComparisonTable rows={tableRows} onAskRow={askAboutRow} />
         <QuickResultPanel quickResult={quickResult} />
-        <div className="ca-sessions"><strong>Phiên so sánh gần đây</strong><div className="ca-session-list">{sessions.slice(0, 5).map((session) => <button key={session.id} className="ca-session" type="button" onClick={() => openSession(session)}>{session.title || 'Phiên đối chiếu'}<br /><span className="ca-muted">{session.updated_at || session.created_at}</span></button>)}</div></div>
+        <div className="ca-sessions">
+          <strong>Phiên so sánh gần đây</strong>
+          <div className="ca-session-list">
+            {sessions.slice(0, 5).map((session) => (
+              <div key={session.id} className="ca-session-row">
+                <button className="ca-session" type="button" onClick={() => openSession(session)}>
+                  {session.title || 'Phiên đối chiếu'}<br /><span className="ca-muted">{session.updated_at || session.created_at}</span>
+                </button>
+                <button className="ca-btn danger ca-session-delete" type="button" disabled={loading === `delete-session-${session.id}`} onClick={() => deleteSession(session.id)} title="Xoá phiên so sánh">
+                  {loading === `delete-session-${session.id}` ? <Loader2 size={16} /> : <Trash2 size={16} />} Xoá
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       <section className="ca-section">
