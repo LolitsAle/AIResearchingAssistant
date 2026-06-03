@@ -1,7 +1,7 @@
 import logging
 from typing import List, Any
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
@@ -17,6 +17,25 @@ from app.db.supabase_client import supabase
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_citation_threshold(value: Any) -> float:
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if threshold != threshold or threshold < 0:
+        return 0.0
+    return threshold
+
+
+def _parse_tags(raw_tags: str | None) -> list[str]:
+    tags: list[str] = []
+    for item in str(raw_tags or "").split(","):
+        tag = item.strip().lstrip("#").lower()
+        if tag and tag not in tags:
+            tags.append(tag)
+    return tags
 
 router = APIRouter(tags=["notebooks"])
 
@@ -233,6 +252,8 @@ async def delete_notebook(notebook_id: str, user: dict = Depends(get_current_use
 async def upload_documents(
     notebook_id: str,
     files: List[UploadFile] = File(...),
+    citation_threshold: float | None = Form(default=0),
+    tags: str = Form(default=""),
     user: dict = Depends(get_current_user),
 ):
     """
@@ -295,7 +316,7 @@ async def upload_documents(
     results = []
 
     for file in files:
-        result = await _process_single_file(file, notebook_id, max_size_bytes)
+        result = await _process_single_file(file, notebook_id, max_size_bytes, citation_threshold, tags)
         results.append(result)
 
     return {
@@ -308,7 +329,7 @@ async def upload_documents(
     }
 
 
-async def _process_single_file(file: UploadFile, notebook_id: str, max_size_bytes: int) -> dict:
+async def _process_single_file(file: UploadFile, notebook_id: str, max_size_bytes: int, citation_threshold: float | None = 0, tags: str = "") -> dict:
     """Xử lý 1 file: validate → parse → chunk → embed → insert Supabase."""
 
     file_type = get_file_type(file.filename)
@@ -359,6 +380,8 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             "page_count": page_count,
             "chunk_count": chunk_count,
             "status": "ready",
+            "citation_threshold": _normalize_citation_threshold(citation_threshold),
+            "tags": _parse_tags(tags),
         }
         try:
             resp = supabase.table("documents").insert(document_payload).execute()
@@ -366,6 +389,8 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             # Backward-compatible fallback for databases that have not added file_type/status yet.
             document_payload.pop("file_type", None)
             document_payload.pop("status", None)
+            document_payload.pop("citation_threshold", None)
+            document_payload.pop("tags", None)
             resp = supabase.table("documents").insert(document_payload).execute()
     except Exception:
         logger.exception(f"Insert document failed: {file.filename}")

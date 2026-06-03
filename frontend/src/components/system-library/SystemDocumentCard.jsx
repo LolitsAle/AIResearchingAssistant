@@ -1,4 +1,4 @@
-import { Bookmark, Database, Download, FileCode, FileText, Star } from 'lucide-react';
+import { Bookmark, Database, Download, FileCode, FileText } from 'lucide-react';
 
 const formatNumber = (value) => new Intl.NumberFormat('vi-VN', { notation: Number(value) >= 1000 ? 'compact' : 'standard' }).format(Number(value) || 0);
 const label = (value) => String(value || 'UNKNOWN').replaceAll('_', ' ');
@@ -30,9 +30,8 @@ export default function SystemDocumentCard({ document, onToggleBookmark, onToggl
           <span className={document.has_data ? 'is-on' : ''}><Database size={13} /> Data</span>
         </div>
         <div className="sl-card__metrics">
-          <span>{formatNumber(document.citation_count)} citations</span>
-          <span><Star size={13} fill="currentColor" /> {(Number(document.vote_avg) || 0).toFixed(1)} ({formatNumber(document.vote_count)})</span>
-          <span>{formatNumber(document.download_count)} downloads</span>
+          <span>{formatNumber(document.citation_count)} trích dẫn</span>
+          <span>{formatNumber(document.download_count)} lượt tải</span>
         </div>
         <div className="sl-card__tags">
           {(document.tags || []).slice(0, 3).map((tag) => <button key={tag} type="button" className="sl-tag" onClick={() => onToggleTag(tag)}>#{tag}</button>)}

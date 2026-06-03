@@ -2,23 +2,23 @@ import { X } from 'lucide-react';
 
 const FILTERS = {
   peer_review_status: [
-    { value: 'PEER_REVIEWED', label: 'Peer-reviewed' },
-    { value: 'PREPRINT', label: 'Preprint' },
-    { value: 'UNKNOWN', label: 'Unknown' },
+    { value: 'PEER_REVIEWED', label: 'Đã bình duyệt' },
+    { value: 'PREPRINT', label: 'Bản thảo / preprint' },
+    { value: 'UNKNOWN', label: 'Chưa rõ' },
   ],
   access_types: [
-    { value: 'OPEN_ACCESS', label: 'Open Access' },
-    { value: 'FREE_TO_READ', label: 'Free to Read' },
-    { value: 'INSTITUTIONAL_ACCESS', label: 'Institutional Access' },
-    { value: 'UNKNOWN', label: 'Unknown' },
+    { value: 'OPEN_ACCESS', label: 'Truy cập mở' },
+    { value: 'FREE_TO_READ', label: 'Đọc miễn phí' },
+    { value: 'INSTITUTIONAL_ACCESS', label: 'Qua tổ chức' },
+    { value: 'UNKNOWN', label: 'Chưa rõ' },
   ],
   review_types: [
-    { value: 'RESEARCH_ARTICLE', label: 'Research Article' },
-    { value: 'REVIEW', label: 'Review' },
-    { value: 'SYSTEMATIC_REVIEW', label: 'Systematic Review' },
-    { value: 'META_ANALYSIS', label: 'Meta-analysis' },
-    { value: 'EDITORIAL', label: 'Editorial' },
-    { value: 'UNKNOWN', label: 'Unknown' },
+    { value: 'RESEARCH_ARTICLE', label: 'Bài nghiên cứu' },
+    { value: 'REVIEW', label: 'Tổng quan' },
+    { value: 'SYSTEMATIC_REVIEW', label: 'Tổng quan hệ thống' },
+    { value: 'META_ANALYSIS', label: 'Phân tích gộp' },
+    { value: 'EDITORIAL', label: 'Xã luận' },
+    { value: 'UNKNOWN', label: 'Chưa rõ' },
   ],
 };
 
@@ -42,12 +42,16 @@ function FilterGroup({ title, options, value, onToggle }) {
 }
 
 export default function SystemLibraryFilters({ filters, selectedTags, suggestedTags = [], loading, onToggleFilter, onToggleTag, onBooleanFilter, onCitationChange, onClear }) {
-  const hasFilters = Object.entries(filters).some(([key, value]) => key !== 'sort' && (Array.isArray(value) ? value.length > 0 : Boolean(value))) || selectedTags.length > 0;
+  const hasFilters = Object.entries(filters).some(([key, value]) => {
+    if (key === 'sort') return false;
+    if (key === 'citation_count_min') return Boolean(filters.citation_count_enabled) && value !== '';
+    return Array.isArray(value) ? value.length > 0 : Boolean(value);
+  }) || selectedTags.length > 0;
 
   return (
     <aside className="sl-filters" aria-label="Bộ lọc thư viện tài liệu">
       <div className="sl-filters__header">
-        <div><p>Community facets</p><strong>Lọc tài liệu</strong></div>
+        <div><p>Bộ lọc cộng đồng</p><strong>Lọc tài liệu</strong></div>
         {hasFilters && <button type="button" onClick={onClear} className="sl-link-button">Xóa bộ lọc</button>}
       </div>
       {loading && <div className="sl-filter-skeleton" aria-live="polite">Đang lọc/search tài liệu...</div>}
@@ -62,14 +66,32 @@ export default function SystemLibraryFilters({ filters, selectedTags, suggestedT
       {selectedTags.length > 0 && (
         <div className="sl-filter-group"><h3>Tags đang lọc</h3><div className="sl-active-tags">{selectedTags.map((tag) => <button key={tag} type="button" className="sl-tag is-selected" onClick={() => onToggleTag(tag)}>#{tag} <X size={12} /></button>)}</div></div>
       )}
-      <FilterGroup title="Peer-review status" options={FILTERS.peer_review_status} value={filters.peer_review_status} onToggle={(value) => onToggleFilter('peer_review_status', value)} />
-      <FilterGroup title="Access Type" options={FILTERS.access_types} value={filters.access_types} onToggle={(value) => onToggleFilter('access_types', value)} />
-      <FilterGroup title="Review Type" options={FILTERS.review_types} value={filters.review_types} onToggle={(value) => onToggleFilter('review_types', value)} />
-      <div className="sl-filter-group"><h3>File/Asset</h3><div className="sl-filter-options">
-        {[['has_pdf', 'Has PDF'], ['has_data', 'Has Data'], ['has_code', 'Has Code']].map(([key, label]) => <button key={key} type="button" className={`sl-filter-chip ${filters[key] ? 'is-active' : ''}`} onClick={() => onBooleanFilter(key)}>{label}</button>)}
+      <FilterGroup title="Trạng thái bình duyệt" options={FILTERS.peer_review_status} value={filters.peer_review_status} onToggle={(value) => onToggleFilter('peer_review_status', value)} />
+      <FilterGroup title="Kiểu truy cập" options={FILTERS.access_types} value={filters.access_types} onToggle={(value) => onToggleFilter('access_types', value)} />
+      <FilterGroup title="Loại bài viết" options={FILTERS.review_types} value={filters.review_types} onToggle={(value) => onToggleFilter('review_types', value)} />
+      <div className="sl-filter-group"><h3>Tệp / tài nguyên</h3><div className="sl-filter-options">
+        {[['has_pdf', 'Có PDF'], ['has_data', 'Có dữ liệu'], ['has_code', 'Có mã nguồn']].map(([key, label]) => <button key={key} type="button" className={`sl-filter-chip ${filters[key] ? 'is-active' : ''}`} onClick={() => onBooleanFilter(key)}>{label}</button>)}
       </div></div>
-      <label className="sl-filter-group sl-citation-filter"><h3>Citation threshold</h3><input type="number" min="0" value={filters.citation_count_min || ''} onChange={(event) => onCitationChange(event.target.value)} placeholder="VD: 10" /></label>
-      <div className="sl-filter-group"><h3>AI-powered filters (schema ready)</h3><p className="sl-modal__muted">Research methodology, readability, reading time, empirical evidence và stance sẽ được bật khi có dữ liệu AI; stance chỉ dùng khi có hypothesis.</p></div>
+      <div className="sl-filter-group sl-citation-filter">
+        <h3>Lọc theo số trích dẫn</h3>
+        <button
+          type="button"
+          className={`sl-filter-chip ${filters.citation_count_enabled ? 'is-active' : ''}`}
+          onClick={() => onBooleanFilter('citation_count_enabled')}
+        >
+          {filters.citation_count_enabled ? 'Đang lọc citation ≥ ngưỡng' : 'Không lọc citation'}
+        </button>
+        <input
+          type="number"
+          min="0"
+          disabled={!filters.citation_count_enabled}
+          value={filters.citation_count_min || ''}
+          onChange={(event) => onCitationChange(event.target.value)}
+          placeholder="Mặc định: 0"
+        />
+        <p className="sl-modal__muted">Khi bật, chỉ hiển thị tài liệu có số trích dẫn lớn hơn hoặc bằng ngưỡng đã chọn.</p>
+      </div>
+      <div className="sl-filter-group"><h3>Bộ lọc AI (đã chuẩn bị schema)</h3><p className="sl-modal__muted">Phương pháp nghiên cứu, độ dễ đọc, thời gian đọc, bằng chứng thực nghiệm và lập trường sẽ được bật khi có dữ liệu AI; lập trường chỉ dùng khi có giả thuyết.</p></div>
     </aside>
   );
 }

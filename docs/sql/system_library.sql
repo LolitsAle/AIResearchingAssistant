@@ -342,3 +342,11 @@ begin
   return query select target_user_id, can_publish, case when can_publish then null else blocked_reason end, blocked_at_value, hidden_count;
 end;
 $$;
+
+-- Citation threshold defaults for document indexing/retrieval metadata.
+alter table public.system_documents
+  add column if not exists citation_threshold double precision not null default 0;
+
+alter table if exists public.documents
+  add column if not exists citation_threshold double precision not null default 0,
+  add column if not exists tags text[] not null default '{}';

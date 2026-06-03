@@ -7,8 +7,10 @@ import SystemLibraryFilters from '../components/system-library/SystemLibraryFilt
 import SystemLibraryToolbar from '../components/system-library/SystemLibraryToolbar';
 import SystemDocumentCard from '../components/system-library/SystemDocumentCard';
 import SystemDocumentDetailModal from '../components/system-library/SystemDocumentDetailModal';
+import OpenAlexPaperCard from '../components/system-library/OpenAlexPaperCard';
+import OpenAlexPaperDetailModal from '../components/system-library/OpenAlexPaperDetailModal';
 
-const emptyFilters = { peer_review_status: [], access_types: [], review_types: [], source_types: [], has_pdf: false, has_data: false, has_code: false, citation_count_min: '', sort: 'newest' };
+const emptyFilters = { peer_review_status: [], access_types: [], review_types: [], source_types: [], has_pdf: false, has_data: false, has_code: false, citation_count_enabled: false, citation_count_min: '', sort: 'newest' };
 
 const STYLES = `
   .sl-page { min-height: 100vh; padding: 24px clamp(14px, 3vw, 42px) 54px; background: radial-gradient(ellipse at 40% 0%, rgba(196,164,100,0.11), transparent 42%), linear-gradient(180deg, #0f0d0a 0%, #12100c 100%); font-family: 'Lora', Georgia, serif; }
@@ -73,6 +75,9 @@ const STYLES = `
   .sl-modal__row { display: grid; gap: 4px; padding: 10px; border-radius: 12px; background: rgba(0,0,0,.18); }
   .sl-modal__row span, .sl-modal__muted { color: #8f8474; font-size: 12px; }
   .sl-modal__row strong { color: #efe6d8; font-size: 13px; overflow-wrap: anywhere; }
+  .sl-rating { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: #efe6d8; }
+  .sl-rating__stars { display: inline-flex; gap: 4px; color: #d4b66f; }
+  .sl-rating__stars .is-dim { color: rgba(255,255,255,.22); }
   .sl-modal__footer { padding: 16px 26px 24px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255,255,255,.08); }
   .sl-toast { margin-top: 16px; color: #f2d48b; background: rgba(212,182,111,.1); border: 1px solid rgba(212,182,111,.18); border-radius: 14px; padding: 12px 14px; }
   .sl-empty, .sl-error { padding: 32px; color: #a79b8a; text-align: center; }
@@ -105,9 +110,11 @@ export default function SystemLibraryPage() {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadTags, setUploadTags] = useState('');
+  const [uploadCitationThreshold, setUploadCitationThreshold] = useState('');
   const [paperQuery, setPaperQuery] = useState('');
   const [paperResults, setPaperResults] = useState([]);
   const [paperLoading, setPaperLoading] = useState(false);
+  const [selectedPaper, setSelectedPaper] = useState(null);
 
   useEffect(() => { const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 400); return () => window.clearTimeout(timer); }, [query]);
 
@@ -115,7 +122,12 @@ export default function SystemLibraryPage() {
     if (!token || activeTab === 'internet') return;
     setLoading(true); setError('');
     try {
-      const result = await api.searchSystemLibrary({ query: debouncedQuery, filters: { ...filters, tags: selectedTags, bookmarked: bookmarksOnly, my_documents: activeTab === 'my' } }, token);
+      const citationMin = Number(filters.citation_count_min);
+      const searchFilters = { ...filters, tags: selectedTags, bookmarked: bookmarksOnly, my_documents: activeTab === 'my' };
+      if (filters.citation_count_enabled) searchFilters.citation_count_min = Number.isFinite(citationMin) ? citationMin : 0;
+      else delete searchFilters.citation_count_min;
+      delete searchFilters.citation_count_enabled;
+      const result = await api.searchSystemLibrary({ query: debouncedQuery, filters: searchFilters }, token);
       setDocuments(result?.documents || []); setTotal(result?.total || 0);
     } catch (err) {
       setDocuments([]); setTotal(0); setError(err.message || 'Không thể tải Thư viện tài liệu.');
@@ -153,7 +165,7 @@ export default function SystemLibraryPage() {
     if (!canPublish(user)) { setNotice('Tài khoản của bạn đã bị tạm khóa quyền đăng tài liệu. Vui lòng liên hệ quản trị viên.'); return; }
     if (!uploadFile) { setNotice('Vui lòng chọn file để upload.'); return; }
     setLoading(true); setNotice('Đang upload và xử lý tài liệu...');
-    try { const result = await api.uploadCommunityLibraryDocument({ file: uploadFile, title: uploadTitle, tags: uploadTags }, token); setUploadFile(null); setUploadTitle(''); setUploadTags(''); setNotice((result?.document?.status === 'PENDING_REVIEW') ? 'Đã upload tài liệu và đang chờ admin duyệt trước khi public.' : 'Đã upload tài liệu vào Thư viện cộng đồng.'); setActiveTab('my'); await fetchDocuments(); }
+    try { const result = await api.uploadCommunityLibraryDocument({ file: uploadFile, title: uploadTitle, tags: uploadTags, citationThreshold: uploadCitationThreshold }, token); setUploadFile(null); setUploadTitle(''); setUploadTags(''); setUploadCitationThreshold(''); setNotice((result?.document?.status === 'PENDING_REVIEW') ? 'Đã upload tài liệu và đang chờ admin duyệt trước khi public.' : 'Đã upload tài liệu vào Thư viện cộng đồng.'); setActiveTab('my'); await fetchDocuments(); }
     catch (err) { setNotice(err.message || 'Không thể upload tài liệu.'); }
     finally { setLoading(false); }
   };
@@ -191,25 +203,26 @@ export default function SystemLibraryPage() {
           <h2>Paper internet search</h2>
           <p>Kết quả được normalize về source, externalId, title, abstract, authors, year, DOI, URL/PDF URL, citations, Open Access, peer-review và asset flags.</p>
           <form className="sl-paper-search" onSubmit={handlePaperSearch}><Search className="sl-search__icon" size={18} /><input value={paperQuery} onChange={(event) => setPaperQuery(event.target.value)} placeholder="Tìm paper trên OpenAlex..." /><button className="sl-search__button" disabled={paperLoading}>{paperLoading ? 'Đang tìm...' : 'Search'}</button></form>
-          {paperLoading ? <div className="sl-empty">Đang search paper...</div> : paperResults.length === 0 ? <div className="sl-empty"><Library size={34} /><p>Nhập từ khóa để tìm paper internet.</p></div> : <div className="sl-paper-list">{paperResults.map((paper) => <article className="sl-paper-item" key={`${paper.source}-${paper.externalId}`}><h3>{paper.title}</h3><p>{(paper.authors || []).slice(0, 4).join(', ') || 'Unknown authors'} · {paper.year || 'Unknown year'} · {paper.citationCount || 0} citations</p><p>{paper.abstract || 'Không có abstract.'}</p><div className="sl-card__badges"><span className="sl-badge">{paper.source}</span><span className="sl-badge">{paper.peerReviewStatus}</span><span className="sl-badge">{paper.isOpenAccess ? 'Open Access' : 'Unknown access'}</span>{paper.hasPdf && <span className="sl-badge">Has PDF</span>}</div><div className="sl-card__footer"><a className="sl-more-link" href={paper.url} target="_blank" rel="noreferrer">Mở nguồn</a>{paper.pdfUrl && paper.isOpenAccess && <a className="sl-download-btn" href={paper.pdfUrl} target="_blank" rel="noreferrer">Open PDF</a>}<button className="sl-upload-btn" onClick={() => handleImportPaper(paper)}>Import vào thư viện</button><button className="sl-toolbar-btn" onClick={() => setNotice('Để lưu vào workspace, hãy import vào thư viện rồi link tài liệu vào notebook/workspace hiện tại.')}>Lưu workspace</button></div></article>)}</div>}
+          {paperLoading ? <div className="sl-empty">Đang search paper...</div> : paperResults.length === 0 ? <div className="sl-empty"><Library size={34} /><p>Nhập từ khóa để tìm paper internet.</p></div> : <div className="sl-grid">{paperResults.map((paper) => <OpenAlexPaperCard key={`${paper.source || 'OpenAlex'}-${paper.id || paper.externalId}`} paper={paper} onOpenDetails={setSelectedPaper} onImport={handleImportPaper} />)}</div>}
         </section>
       ) : (
         <>
           <section className="sl-upload-panel" style={{ marginTop: 22 }}>
             <h2><Upload size={18} /> Upload tài liệu cộng đồng</h2>
             <p>{canPublish(user) ? 'User có canPublishDocuments = true có thể gửi tài liệu; tài liệu user thường sẽ chờ duyệt nếu bật kiểm duyệt.' : 'Tài khoản của bạn đã bị tạm khóa quyền đăng tài liệu. Vui lòng liên hệ quản trị viên.'}</p>
-            <form className="sl-upload-form" onSubmit={handleUpload}><input type="file" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} /><input value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} placeholder="Tiêu đề" /><input value={uploadTags} onChange={(event) => setUploadTags(event.target.value)} placeholder="tags, cách nhau bằng dấu phẩy" /><button className="sl-upload-btn" disabled={loading}>{loading ? 'Đang xử lý...' : 'Upload'}</button></form>
+            <form className="sl-upload-form" onSubmit={handleUpload}><input type="file" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} /><input value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} placeholder="Tiêu đề" /><input value={uploadTags} onChange={(event) => setUploadTags(event.target.value)} placeholder="tags, cách nhau bằng dấu phẩy" /><input type="number" min="0" step="0.01" value={uploadCitationThreshold} onChange={(event) => setUploadCitationThreshold(event.target.value)} placeholder="Citation threshold mặc định: 0" /><button className="sl-upload-btn" disabled={loading}>{loading ? 'Đang xử lý...' : 'Upload'}</button></form>
           </section>
           <div className="sl-body">
             <SystemLibraryFilters filters={filters} selectedTags={selectedTags} suggestedTags={suggestedTags} loading={loading} onToggleFilter={(group, value) => setFilters((current) => ({ ...current, [group]: toggleInList(current[group] || [], value) }))} onToggleTag={(tag) => setSelectedTags((current) => toggleInList(current, tag))} onBooleanFilter={(key) => setFilters((current) => ({ ...current, [key]: !current[key] }))} onCitationChange={(value) => setFilters((current) => ({ ...current, citation_count_min: value }))} onClear={() => { setFilters(emptyFilters); setSelectedTags([]); setBookmarksOnly(false); }} />
             <section className="sl-content">
               <SystemLibraryToolbar total={total} bookmarksOnly={bookmarksOnly} onToggleBookmarksOnly={() => setBookmarksOnly((value) => !value)} sort={filters.sort} onSortChange={(sort) => setFilters((current) => ({ ...current, sort }))} hasQuery={Boolean(debouncedQuery)} />
-              {error ? <div className="sl-error"><AlertCircle size={30} /><p>{error}</p></div> : loading ? <div className="sl-grid">{Array.from({ length: 6 }).map((_, index) => <div key={index} className="sl-card sl-filter-skeleton">Đang tải tài liệu...</div>)}</div> : documents.length === 0 ? <div className="sl-empty"><Library size={34} /><p>{activeTab === 'my' ? 'Bạn chưa có tài liệu nào phù hợp.' : 'Chưa có tài liệu cộng đồng phù hợp.'}</p></div> : <div className="sl-grid">{documents.map((document) => <SystemDocumentCard key={document.id} document={document} onToggleBookmark={handleToggleBookmark} onToggleTag={(tag) => setSelectedTags((current) => toggleInList(current, tag))} onOpenDetails={setSelectedDocument} onDownload={handleDownload} onVote={handleVote} downloading={downloadingId === document.id} />)}</div>}
+              {error ? <div className="sl-error"><AlertCircle size={30} /><p>{error}</p></div> : loading ? <div className="sl-grid">{Array.from({ length: 6 }).map((_, index) => <div key={index} className="sl-card sl-filter-skeleton">Đang tải tài liệu...</div>)}</div> : documents.length === 0 ? <div className="sl-empty"><Library size={34} /><p>{activeTab === 'my' ? 'Bạn chưa có tài liệu nào phù hợp.' : 'Chưa có tài liệu cộng đồng phù hợp.'}</p></div> : <div className="sl-grid">{documents.map((document) => <SystemDocumentCard key={document.id} document={document} onToggleBookmark={handleToggleBookmark} onToggleTag={(tag) => setSelectedTags((current) => toggleInList(current, tag))} onOpenDetails={setSelectedDocument} onDownload={handleDownload} downloading={downloadingId === document.id} />)}</div>}
             </section>
           </div>
         </>
       )}
       <SystemDocumentDetailModal document={selectedDocument} onClose={() => setSelectedDocument(null)} onDownload={handleDownload} downloading={downloadingId === selectedDocument?.id} />
+      <OpenAlexPaperDetailModal paper={selectedPaper} onClose={() => setSelectedPaper(null)} onImport={handleImportPaper} />
     </div>
   );
 }

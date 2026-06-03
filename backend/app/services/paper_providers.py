@@ -45,6 +45,32 @@ def _has_data(locations: list[dict[str, Any]], concepts: list[dict[str, Any]]) -
     return any(token in haystack for token in ["dataset", "data", "zenodo", "figshare", "dryad", "osf"])
 
 
+def _summary_from_abstract(abstract: str, max_chars: int = 320) -> str:
+    text = " ".join(str(abstract or "").split())
+    if not text:
+        return ""
+    sentences = []
+    for part in text.replace("? ", "?. ").replace("! ", "!. ").split(". "):
+        cleaned = part.strip()
+        if cleaned:
+            sentences.append(cleaned if cleaned.endswith((".", "?", "!")) else f"{cleaned}.")
+        if len(" ".join(sentences)) >= max_chars or len(sentences) >= 2:
+            break
+    summary = " ".join(sentences) or text
+    return summary if len(summary) <= max_chars else f"{summary[:max_chars].rsplit(' ', 1)[0]}…"
+
+
+def _display_names(items: list[dict[str, Any]], limit: int = 8) -> list[str]:
+    names: list[str] = []
+    for item in items or []:
+        name = item.get("display_name") or item.get("name")
+        if name and name not in names:
+            names.append(str(name))
+        if len(names) >= limit:
+            break
+    return names
+
+
 class PaperProvider(ABC):
     source: str
 
@@ -80,25 +106,62 @@ class OpenAlexProvider(PaperProvider):
         authors = [((a.get("author") or {}).get("display_name")) for a in authorships]
         authors = [name for name in authors if name]
         concepts = work.get("concepts") or []
-        return {
+        topics = work.get("topics") or []
+        keywords = work.get("keywords") or []
+        abstract = _inverted_abstract_to_text(work.get("abstract_inverted_index"))
+        concept_names = _display_names(concepts, 10)
+        topic_names = _display_names(topics, 10)
+        keyword_names = _display_names(keywords, 10)
+        tags = []
+        for name in [*topic_names, *concept_names, *keyword_names]:
+            if name and name not in tags:
+                tags.append(name)
+        venue = ((primary.get("source") or {}).get("display_name") or (work.get("host_venue") or {}).get("display_name") or "")
+        openalex_url = work.get("id")
+        landing_page_url = primary.get("landing_page_url") or best_oa.get("landing_page_url") or url
+        doi = str(work.get("doi") or "").replace("https://doi.org/", "") or None
+        normalized = {
+            "id": str(work.get("id") or "").rsplit("/", 1)[-1],
             "source": self.source,
             "externalId": str(work.get("id") or "").rsplit("/", 1)[-1],
             "title": work.get("title") or work.get("display_name") or "Untitled paper",
-            "abstract": _inverted_abstract_to_text(work.get("abstract_inverted_index")),
             "authors": authors,
             "year": work.get("publication_year"),
-            "doi": str(work.get("doi") or "").replace("https://doi.org/", "") or None,
-            "url": url,
-            "pdfUrl": oa_pdf,
-            "citationCount": int(work.get("cited_by_count") or 0),
-            "isOpenAccess": is_oa,
-            "peerReviewStatus": "PEER_REVIEWED" if work_type in PEER_REVIEWED_TYPES else ("PREPRINT" if work_type == "preprint" else "UNKNOWN"),
-            "hasPdf": bool(oa_pdf),
-            "hasCode": _has_code(locations, concepts),
-            "hasData": _has_data(locations, concepts),
-            "accessType": "OPEN_ACCESS" if is_oa else "UNKNOWN",
-            "reviewType": "REVIEW" if "review" in work_type else ("RESEARCH_ARTICLE" if work_type in PEER_REVIEWED_TYPES else "UNKNOWN"),
+            "publication_date": work.get("publication_date"),
+            "venue": venue,
+            "doi": doi,
+            "openalex_url": openalex_url,
+            "landing_page_url": landing_page_url,
+            "pdf_url": oa_pdf,
+            "abstract": abstract,
+            "summary": _summary_from_abstract(abstract),
+            "tags": tags[:8],
+            "concepts": concept_names,
+            "keywords": keyword_names,
+            "citation_count": int(work.get("cited_by_count") or 0),
+            "type": work.get("type") or "unknown",
+            "is_open_access": is_oa,
+            "peer_review_status": "PEER_REVIEWED" if work_type in PEER_REVIEWED_TYPES else ("PREPRINT" if work_type == "preprint" else "UNKNOWN"),
+            "has_pdf": bool(oa_pdf),
+            "has_code": _has_code(locations, concepts),
+            "has_data": _has_data(locations, concepts),
+            "access_type": "OPEN_ACCESS" if is_oa else "UNKNOWN",
+            "review_type": "REVIEW" if "review" in work_type else ("RESEARCH_ARTICLE" if work_type in PEER_REVIEWED_TYPES else "UNKNOWN"),
         }
+        # Backwards-compatible aliases for existing frontend/import code.
+        normalized.update({
+            "url": landing_page_url or openalex_url,
+            "pdfUrl": oa_pdf,
+            "citationCount": normalized["citation_count"],
+            "isOpenAccess": is_oa,
+            "peerReviewStatus": normalized["peer_review_status"],
+            "hasPdf": normalized["has_pdf"],
+            "hasCode": normalized["has_code"],
+            "hasData": normalized["has_data"],
+            "accessType": normalized["access_type"],
+            "reviewType": normalized["review_type"],
+        })
+        return normalized
 
 
 def get_paper_provider(source: str = "openalex") -> PaperProvider:

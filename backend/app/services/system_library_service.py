@@ -26,6 +26,19 @@ logger = logging.getLogger(__name__)
 DOCUMENT_STATUSES = {"PUBLISHED", "PENDING_REVIEW", "HIDDEN", "REJECTED", "DELETED"}
 USER_UPLOAD_DEFAULT_STATUS = "PENDING_REVIEW"
 
+
+def normalize_citation_threshold(value: Any, *, maximum: float | None = None) -> float:
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if threshold != threshold or threshold < 0:
+        return 0.0
+    if maximum is not None and threshold > maximum:
+        return maximum
+    return threshold
+
+
 SYSTEM_DOCUMENT_COLUMNS = (
     "id, title, filename, file_type, storage_path, download_url, file_size, mime_type, category, tags, "
     "summary, page_count, word_count, is_vector_ready, created_by, created_at, updated_at, "
@@ -440,7 +453,7 @@ def _parse_tags(raw_tags: str | list[str] | None) -> list[str]:
         source = str(raw_tags or "").split(",")
     cleaned: list[str] = []
     for tag in source:
-        value = str(tag or "").strip().lstrip("#")
+        value = str(tag or "").strip().lstrip("#").lower()
         if value and value not in cleaned:
             cleaned.append(value)
     return cleaned
@@ -484,6 +497,7 @@ async def import_system_document_from_upload(
     category: str | None = None,
     tags: str | list[str] | None = None,
     mime_type: str | None = None,
+    citation_threshold: float | int | str | None = 0,
     source_type: str = "SYSTEM_UPLOAD",
     document_status: str = "PUBLISHED",
     uploader_name: str = "Hệ thống",
@@ -510,6 +524,7 @@ async def import_system_document_from_upload(
     if not chunks:
         raise HTTPException(status_code=400, detail={"code": "PARSE_FAILED", "message": "Không tạo được chunk nội dung từ file này"})
 
+    citation_threshold_value = normalize_citation_threshold(citation_threshold)
     metadata = await _auto_metadata(pages, chunks, category, tags)
     resolved_mime_type = _guess_mime_type(filename, mime_type)
     document_payload = {
@@ -523,6 +538,7 @@ async def import_system_document_from_upload(
         "word_count": _estimate_word_count(pages),
         "file_size": len(file_contents),
         "mime_type": resolved_mime_type,
+        "citation_threshold": citation_threshold_value,
         "created_by": _valid_uuid_or_none(created_by),
         "uploader_name": uploader_name,
         "source_type": source_type,
@@ -542,9 +558,14 @@ async def import_system_document_from_upload(
 
     try:
         resp = supabase.table("system_documents").insert(document_payload).execute()
-    except Exception as exc:
-        logger.exception("Insert system document metadata failed")
-        raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể tạo metadata tài liệu hệ thống"}) from exc
+    except Exception:
+        # Backward-compatible fallback until the migration adding citation_threshold is applied.
+        document_payload.pop("citation_threshold", None)
+        try:
+            resp = supabase.table("system_documents").insert(document_payload).execute()
+        except Exception as exc:
+            logger.exception("Insert system document metadata failed")
+            raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể tạo metadata tài liệu hệ thống"}) from exc
     rows, error = _supabase_response_data(resp)
     if error or not rows:
         raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể tạo metadata tài liệu hệ thống"})
@@ -606,6 +627,8 @@ async def import_system_document_from_upload(
 
 
 def _query_bookmarked_ids(user_id: str) -> set[str]:
+    if not _valid_uuid_or_none(user_id):
+        return set()
     try:
         resp = supabase.table("system_document_bookmarks").select("document_id").eq("user_id", user_id).execute()
     except Exception as exc:
@@ -647,7 +670,11 @@ def _apply_filters(query: Any, filters: dict) -> Any:
         query = query.eq("has_code", True)
     citation_min = filters.get("citation_count_min")
     if citation_min not in (None, ""):
-        query = query.gte("citation_count", int(citation_min))
+        try:
+            citation_threshold = max(0, int(float(citation_min)))
+        except (TypeError, ValueError):
+            citation_threshold = 0
+        query = query.gte("citation_count", citation_threshold)
     if tags:
         query = query.contains("tags", tags)
     return query
@@ -842,6 +869,7 @@ async def import_community_document_from_upload(
     category: str | None = None,
     tags: str | list[str] | None = None,
     mime_type: str | None = None,
+    citation_threshold: float | int | str | None = 0,
 ) -> dict:
     require_library_publish_allowed(user)
     user_id = _get_user_id(user)
@@ -856,6 +884,7 @@ async def import_community_document_from_upload(
         category=category,
         tags=tags,
         mime_type=mime_type,
+        citation_threshold=citation_threshold,
         source_type="USER_UPLOAD",
         document_status=default_status,
         uploader_name=uploader_name,
@@ -871,34 +900,60 @@ async def import_community_document_from_upload(
     return {**document, "source_type": "USER_UPLOAD", "uploader_name": uploader_name, "status": default_status}
 
 
-def import_internet_paper_to_library(paper: dict, user: dict) -> dict:
+async def import_internet_paper_to_library(paper: dict, user: dict) -> dict:
     require_library_publish_allowed(user)
     user_id = _get_user_id(user)
     profile = _profile_for_user_id(user_id)
     default_status = "PUBLISHED" if str(user.get("role") or "user").lower() == "admin" else USER_UPLOAD_DEFAULT_STATUS
     uploader_name = profile.get("display_name") or profile.get("full_name") or user.get("name") or user.get("email") or "Người dùng"
+    fallback_tags = _parse_tags(paper.get("tags") or paper.get("concepts") or [paper.get("source") or "internet"])
+    fallback_summary = paper.get("abstract") or paper.get("summary") or ""
+    metadata_input = "\n".join(
+        str(part)
+        for part in [
+            paper.get("title"),
+            fallback_summary,
+            ", ".join(paper.get("authors") or []),
+            paper.get("venue") or paper.get("source"),
+            ", ".join(fallback_tags),
+        ]
+        if part
+    )
+    try:
+        ai_metadata = await generate_system_document_metadata(metadata_input) if metadata_input else {}
+    except Exception as exc:
+        logger.info("AI metadata scan for imported internet paper failed; using provider metadata: %s", exc)
+        ai_metadata = {}
+
+    scanned_tags = _parse_tags(ai_metadata.get("tags") or [])
+    scanned_summary = str(ai_metadata.get("summary") or "").strip()
+    scanned_category = str(ai_metadata.get("category") or "").strip()
+
+    has_pdf = bool(paper.get("has_pdf") or paper.get("hasPdf") or paper.get("pdf_url") or paper.get("pdfUrl"))
+    is_open_access = bool(paper.get("is_open_access") or paper.get("isOpenAccess"))
+    pdf_url = paper.get("pdf_url") or paper.get("pdfUrl")
     payload = {
         "title": paper.get("title") or "Internet paper",
-        "filename": paper.get("title") or paper.get("externalId") or "internet-paper",
-        "file_type": "PDF" if paper.get("hasPdf") else "LINK",
-        "download_url": paper.get("pdfUrl") if paper.get("isOpenAccess") else None,
-        "mime_type": "application/pdf" if paper.get("hasPdf") else None,
-        "category": "Internet",
-        "tags": _parse_tags(paper.get("tags") or [paper.get("source") or "internet"]),
-        "summary": paper.get("abstract") or "",
+        "filename": paper.get("title") or paper.get("externalId") or paper.get("id") or "internet-paper",
+        "file_type": "PDF" if has_pdf else "LINK",
+        "download_url": pdf_url if (is_open_access and pdf_url) else None,
+        "mime_type": "application/pdf" if has_pdf else None,
+        "category": scanned_category or "Internet",
+        "tags": scanned_tags or fallback_tags,
+        "summary": scanned_summary or fallback_summary,
         "created_by": _valid_uuid_or_none(user_id),
         "uploader_name": uploader_name,
         "source_type": "INTERNET",
         "status": default_status,
-        "peer_review_status": paper.get("peerReviewStatus") or "UNKNOWN",
-        "access_type": paper.get("accessType") or ("OPEN_ACCESS" if paper.get("isOpenAccess") else "UNKNOWN"),
-        "review_type": paper.get("reviewType") or "UNKNOWN",
-        "has_pdf": bool(paper.get("hasPdf")),
-        "has_code": bool(paper.get("hasCode")),
-        "has_data": bool(paper.get("hasData")),
-        "citation_count": int(paper.get("citationCount") or 0),
+        "peer_review_status": paper.get("peer_review_status") or paper.get("peerReviewStatus") or "UNKNOWN",
+        "access_type": paper.get("access_type") or paper.get("accessType") or ("OPEN_ACCESS" if is_open_access else "UNKNOWN"),
+        "review_type": paper.get("review_type") or paper.get("reviewType") or "UNKNOWN",
+        "has_pdf": has_pdf,
+        "has_code": bool(paper.get("has_code") or paper.get("hasCode")),
+        "has_data": bool(paper.get("has_data") or paper.get("hasData")),
+        "citation_count": int(paper.get("citation_count") or paper.get("citationCount") or 0),
         "doi": paper.get("doi"),
-        "external_url": paper.get("url"),
+        "external_url": paper.get("landing_page_url") or paper.get("openalex_url") or paper.get("url"),
         "download_count": 0,
         "vote_avg": 0,
         "vote_count": 0,

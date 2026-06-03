@@ -294,9 +294,11 @@ export const api = {
     ),
 
   // Upload nhiều file cùng lúc vào một notebook
-  uploadDocuments: (notebookId, files, token, onProgress) => {
+  uploadDocuments: (notebookId, files, token, onProgress, options = {}) => {
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
+    formData.append("citation_threshold", Number.isFinite(Number(options.citationThreshold)) ? Number(options.citationThreshold) : 0);
+    formData.append("tags", options.tags || "");
     return unwrapRequest(() =>
       axiosInstance.post(`/api/notebooks/${notebookId}/upload`, formData, {
         headers: { ...authHeader(token) },
@@ -438,6 +440,7 @@ export const api = {
     formData.append("title", payload.title || "");
     formData.append("category", payload.category || "");
     formData.append("tags", payload.tags || "");
+    formData.append("citation_threshold", Number.isFinite(Number(payload.citationThreshold)) ? Number(payload.citationThreshold) : 0);
     return unwrapRequest(() =>
       axiosInstance.post("/api/system-library/documents/upload", formData, {
         headers: { ...authHeader(token) },
@@ -506,6 +509,7 @@ export const api = {
     formData.append("title", payload.title || "");
     formData.append("category", payload.category || "");
     formData.append("tags", payload.tags || "");
+    formData.append("citation_threshold", Number.isFinite(Number(payload.citationThreshold)) ? Number(payload.citationThreshold) : 0);
     return unwrapRequest(() =>
       axiosInstance.post("/api/admin/system-library/import", formData, {
         headers: { ...authHeader(token) },
@@ -625,16 +629,16 @@ export const api = {
     ),
 
   // ── CHAT ─────────────────────────────────────────────────────────────────
-  sendResearchQuery: ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, options = {}) =>
+  sendResearchQuery: ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null, citationThreshold = 0 }, token, options = {}) =>
     unwrapRequest(() =>
       axiosInstance.post(
         "/api/chat/ask",
-        { notebook_id: notebookId, question, chat_history: chatHistory, selected_document_ids: selectedDocumentIds, research_session_id: researchSessionId },
+        { notebook_id: notebookId, question, chat_history: chatHistory, selected_document_ids: selectedDocumentIds, research_session_id: researchSessionId, citation_threshold: Number.isFinite(Number(citationThreshold)) ? Number(citationThreshold) : 0 },
         { headers: authHeader(token), signal: options.signal }
       )
     ),
 
-  streamResearchQuery: async ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, callbacks = {}, options = {}) => {
+  streamResearchQuery: async ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null, citationThreshold = 0 }, token, callbacks = {}, options = {}) => {
     try {
       const response = await fetchWithTimeout(`${BASE_URL}/api/chat/ask/stream`, {
         method: "POST",
@@ -648,6 +652,7 @@ export const api = {
           chat_history: chatHistory,
           selected_document_ids: selectedDocumentIds,
           research_session_id: researchSessionId,
+          citation_threshold: Number.isFinite(Number(citationThreshold)) ? Number(citationThreshold) : 0,
         }),
         signal: options.signal,
       }, options.timeoutMs || REQUEST_TIMEOUTS.chat);

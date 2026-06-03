@@ -1,4 +1,4 @@
-import { Download, FileText, X } from 'lucide-react';
+import { Download, FileText, Star, X } from 'lucide-react';
 
 const formatDate = (value) => {
   if (!value) return 'Chưa có thông tin';
@@ -14,6 +14,23 @@ const formatFileSize = (bytes) => {
   while (value >= 1024 && unitIndex < units.length - 1) { value /= 1024; unitIndex += 1; }
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 };
+
+function RatingStars({ rating, count }) {
+  const numeric = Number(rating);
+  const hasRating = Number.isFinite(numeric) && numeric > 0;
+  const litStars = hasRating ? Math.max(0, Math.min(5, Math.round(numeric))) : 0;
+  return (
+    <div className="sl-rating" aria-label={hasRating ? `Đánh giá ${numeric.toFixed(1)} trên 5` : 'Chưa có đánh giá'}>
+      <div className="sl-rating__stars">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <Star key={star} size={20} fill={star <= litStars ? 'currentColor' : 'none'} className={star <= litStars ? 'is-lit' : 'is-dim'} />
+        ))}
+      </div>
+      <strong>{hasRating ? `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}/5` : 'Chưa có đánh giá'}</strong>
+      {hasRating && <span className="sl-modal__muted">({Number(count) || 0} lượt đánh giá)</span>}
+    </div>
+  );
+}
 
 function DetailRow({ label, value }) {
   if (value === null || value === undefined || value === '') return null;
@@ -42,6 +59,10 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
             <p>{summary}</p>
           </section>
           <section className="sl-modal__section">
+            <h3>Đánh giá</h3>
+            <RatingStars rating={document.vote_avg ?? document.rating} count={document.vote_count ?? document.rating_count} />
+          </section>
+          <section className="sl-modal__section">
             <h3>Metadata</h3>
             <div className="sl-modal__grid">
               <DetailRow label="Tên file" value={document.filename || 'Chưa có thông tin'} />
@@ -60,7 +81,7 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
               <DetailRow label="Access Type" value={document.access_type || 'UNKNOWN'} />
               <DetailRow label="Review Type" value={document.review_type || 'UNKNOWN'} />
               <DetailRow label="Has PDF / Code / Data" value={`${document.has_pdf ? 'PDF' : 'No PDF'} · ${document.has_code ? 'Code' : 'No Code'} · ${document.has_data ? 'Data' : 'No Data'}`} />
-              <DetailRow label="Citation / Vote / Download" value={`${document.citation_count || 0} citations · ${(Number(document.vote_avg) || 0).toFixed(1)} (${document.vote_count || 0}) · ${document.download_count || 0} downloads`} />
+              <DetailRow label="Trích dẫn / lượt tải" value={`${document.citation_count || 0} trích dẫn · ${document.download_count || 0} lượt tải`} />
               <DetailRow label="DOI" value={document.doi || 'Chưa có thông tin'} />
               <DetailRow label="URL" value={document.external_url || document.download_url || 'Chưa có thông tin'} />
             </div>

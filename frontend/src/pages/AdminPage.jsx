@@ -52,7 +52,7 @@ export default function AdminPage() {
   const { token } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [file, setFile] = useState(null);
-  const [form, setForm] = useState({ title: '', category: '', tags: '' });
+  const [form, setForm] = useState({ title: '', category: '', tags: '', citationThreshold: '' });
   const [status, setStatus] = useState('ready');
   const [message, setMessage] = useState('');
   const [progress, setProgress] = useState(0);
@@ -120,7 +120,7 @@ export default function AdminPage() {
       const document = result?.document;
       if (document) setDocuments((current) => [document, ...current.filter((item) => item.id !== document.id)]);
       setFile(null);
-      setForm({ title: '', category: '', tags: '' });
+      setForm({ title: '', category: '', tags: '', citationThreshold: '' });
       setStatus('success');
       setMessage('Import thành công: file gốc đã được lưu, tài liệu đã parse, tạo metadata và vectorize.');
     } catch (err) {
@@ -192,6 +192,7 @@ export default function AdminPage() {
           <label className="admin-field">Title override<input value={form.title} onChange={(event) => updateForm('title', event.target.value)} placeholder="Để trống sẽ dùng tên file" /></label>
           <label className="admin-field">Category override<input value={form.category} onChange={(event) => updateForm('category', event.target.value)} placeholder="Để trống để AI tự phân loại" /></label>
           <label className="admin-field">Tags override<input value={form.tags} onChange={(event) => updateForm('tags', event.target.value)} placeholder="pháp luật, doanh nghiệp" /></label>
+          <label className="admin-field">Citation threshold<input type="number" min="0" step="0.01" value={form.citationThreshold} onChange={(event) => updateForm('citationThreshold', event.target.value)} placeholder="Mặc định: 0" /></label>
           <button type="submit" className="admin-button" disabled={busy}>{busy ? <Loader2 className="spin" size={16} /> : <UploadCloud size={16} />} Import vào Thư viện</button>
           <div className="admin-stages">{importStages.map((stage) => <span key={stage.id} className={`admin-stage ${getStageState(stage.id)}`}><CheckCircle2 size={13} /> {stage.label}</span>)}</div>
           {progress > 0 && <div className="admin-progress"><span style={{ width: `${progress}%` }} /></div>}

@@ -46,6 +46,7 @@ async def import_system_document(
     title: str | None = Form(default=None),
     category: str | None = Form(default=None),
     tags: str = Form(default=""),
+    citation_threshold: float | None = Form(default=0),
     user: dict = Depends(get_current_user),
 ):
     require_admin(user)
@@ -58,6 +59,7 @@ async def import_system_document(
         category=category,
         tags=tags,
         mime_type=file.content_type,
+        citation_threshold=0 if citation_threshold is None else citation_threshold,
     )
     return {"success": True, "data": {"document": document}}
 

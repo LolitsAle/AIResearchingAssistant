@@ -113,6 +113,7 @@ async def upload_document(
     title: str | None = Form(default=None),
     category: str | None = Form(default=None),
     tags: str = Form(default=""),
+    citation_threshold: float | None = Form(default=0),
     user: dict = Depends(get_current_user),
 ):
     contents = await file.read()
@@ -124,6 +125,7 @@ async def upload_document(
         category=category,
         tags=tags,
         mime_type=file.content_type,
+        citation_threshold=0 if citation_threshold is None else citation_threshold,
     )
     return {"success": True, "data": {"document": document}}
 
@@ -137,7 +139,7 @@ async def search_papers(body: PaperSearchRequest, user: dict = Depends(get_curre
 
 @router.post("/papers/import", response_model=dict)
 async def import_paper(body: ImportInternetPaperRequest, user: dict = Depends(get_current_user)):
-    return {"success": True, "data": {"document": import_internet_paper_to_library(body.paper, user)}}
+    return {"success": True, "data": {"document": await import_internet_paper_to_library(body.paper, user)}}
 
 
 @router.post("/documents/{document_id}/vote", response_model=dict)
