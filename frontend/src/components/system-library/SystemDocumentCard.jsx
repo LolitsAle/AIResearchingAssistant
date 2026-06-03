@@ -3,7 +3,7 @@ import { Bookmark, Database, Download, FileCode, FileText } from 'lucide-react';
 const formatNumber = (value) => new Intl.NumberFormat('vi-VN', { notation: Number(value) >= 1000 ? 'compact' : 'standard' }).format(Number(value) || 0);
 const label = (value) => String(value || 'UNKNOWN').replaceAll('_', ' ');
 
-export default function SystemDocumentCard({ document, onToggleBookmark, onToggleTag, onOpenDetails, onDownload, downloading }) {
+export default function SystemDocumentCard({ document, onToggleBookmark, onToggleTag, onOpenDetails, onDownload, onVote, downloading }) {
   const title = document.title || document.filename || 'Tài liệu chưa có tiêu đề';
   const summary = document.summary || document.ai_summary || document.description || 'Chưa có summary.';
 
@@ -42,6 +42,9 @@ export default function SystemDocumentCard({ document, onToggleBookmark, onToggl
         <button type="button" className="sl-download-btn" onClick={() => onDownload(document)} disabled={downloading || !document.can_download} title={document.can_download ? 'Tải PDF/file hợp lệ' : 'Chỉ download khi có Open Access PDF hoặc file upload hợp lệ'}>
           <Download size={16} /> {downloading ? 'Đang tải...' : 'Download'}
         </button>
+        <div className="sl-card__actions">
+          {[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" className="sl-star-btn" onClick={() => onVote(document, rating)} aria-label={`Vote ${rating} sao`}><Star size={14} /></button>)}
+        </div>
         <button type="button" className="sl-more-link" onClick={() => onOpenDetails(document)}>Xem thêm</button>
       </div>
     </article>
