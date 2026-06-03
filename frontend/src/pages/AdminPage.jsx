@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle2, FileText, Loader2, Trash2, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, FileText, Loader2, ShieldAlert, Trash2, UploadCloud, X } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -18,7 +18,7 @@ const STYLES = `
   .admin-file button { flex: 0 0 auto; border: 0; border-radius: 10px; width: 30px; height: 30px; color: #ffb4b4; background: rgba(255,100,100,.1); cursor: pointer; }
   .admin-drop strong { display: block; color: #f2d48b; margin: 10px 0 6px; }
   .admin-field { display: grid; gap: 7px; margin-top: 14px; color: #bfb4a3; font-size: 13px; }
-  .admin-field input { border: 1px solid rgba(255,255,255,.1); border-radius: 12px; background: rgba(8,7,5,.65); color: #eee6d8; padding: 11px 12px; outline: none; }
+  .admin-field input, .admin-field select { border: 1px solid rgba(255,255,255,.1); border-radius: 12px; background: rgba(8,7,5,.65); color: #eee6d8; padding: 11px 12px; outline: none; }
   .admin-button { width: 100%; margin-top: 16px; border: 0; border-radius: 14px; padding: 12px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: linear-gradient(135deg, #d4b66f, #8a6a30); color: #18130d; font-weight: 800; cursor: pointer; }
   .admin-button:disabled { opacity: .45; cursor: not-allowed; }
   .admin-progress { margin-top: 12px; height: 7px; background: rgba(255,255,255,.08); border-radius: 999px; overflow: hidden; }
@@ -34,8 +34,13 @@ const STYLES = `
   .admin-doc h3 { display:flex; align-items:center; gap:8px; margin: 0 0 6px; font-size: 16px; }
   .admin-doc p { margin: 6px 0; color: #a79b8a; line-height: 1.55; }
   .admin-meta { display: flex; flex-wrap: wrap; gap: 8px; color: #8f8474; font-size: 12px; }
-  .admin-tag { color: #f2d48b; background: rgba(212,182,111,.12); padding: 4px 8px; border-radius: 999px; }
+  .admin-tag, .admin-status-badge { color: #f2d48b; background: rgba(212,182,111,.12); padding: 4px 8px; border-radius: 999px; }
+  .admin-status-badge.PUBLISHED { color: #8fe09e; background: rgba(80,180,80,.12); }
+  .admin-status-badge.HIDDEN, .admin-status-badge.REJECTED { color: #ff9a9a; background: rgba(255,80,80,.1); }
+  .admin-status-badge.PENDING_REVIEW { color: #f2d48b; }
   .admin-delete { border: 1px solid rgba(255,120,120,.2); color: #ff9a9a; background: rgba(255,80,80,.08); border-radius: 12px; width: 38px; height: 38px; cursor: pointer; }
+  .admin-doc-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .admin-doc-actions select { border: 1px solid rgba(255,255,255,.1); border-radius: 12px; background: rgba(8,7,5,.65); color: #eee6d8; padding: 9px 10px; outline: none; }
   .admin-empty { color: #8f8474; padding: 18px; text-align: center; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .spin { animation: spin .8s linear infinite; }
@@ -47,11 +52,12 @@ export default function AdminPage() {
   const { token } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [file, setFile] = useState(null);
-  const [form, setForm] = useState({ title: '', category: '', tags: '' });
+  const [form, setForm] = useState({ title: '', category: '', tags: '', citationThreshold: '' });
   const [status, setStatus] = useState('ready');
   const [message, setMessage] = useState('');
   const [progress, setProgress] = useState(0);
   const [dragActive, setDragActive] = useState(false);
+  const [permissionForm, setPermissionForm] = useState({ userId: '', canPublish: true, reason: '' });
 
   const fetchDocuments = useCallback(async () => {
     if (!token) return;
@@ -114,7 +120,7 @@ export default function AdminPage() {
       const document = result?.document;
       if (document) setDocuments((current) => [document, ...current.filter((item) => item.id !== document.id)]);
       setFile(null);
-      setForm({ title: '', category: '', tags: '' });
+      setForm({ title: '', category: '', tags: '', citationThreshold: '' });
       setStatus('success');
       setMessage('Import thành công: file gốc đã được lưu, tài liệu đã parse, tạo metadata và vectorize.');
     } catch (err) {
@@ -122,6 +128,35 @@ export default function AdminPage() {
       setMessage(err.message || 'Import tài liệu thất bại.');
     } finally {
       setProgress(0);
+    }
+  };
+
+  const handlePermissionUpdate = async (event) => {
+    event?.preventDefault?.();
+    if (!permissionForm.userId.trim()) { setMessage('Vui lòng nhập user id cần cập nhật quyền đăng tài liệu public.'); return; }
+    let reason = permissionForm.reason.trim();
+    if (!permissionForm.canPublish) {
+      if (!window.confirm('Tắt quyền đăng tài liệu public của user này? Tất cả tài liệu PUBLISHED của user sẽ chuyển sang HIDDEN.')) return;
+      reason = window.prompt('Nhập lý do khóa quyền đăng tài liệu public:', reason) || reason;
+    }
+    try {
+      const result = await api.updateUserPublishPermission(permissionForm.userId.trim(), { canPublishDocuments: permissionForm.canPublish, reason }, token);
+      setMessage(permissionForm.canPublish ? 'Đã mở quyền đăng tài liệu public cho user. Tài liệu cũ không tự động publish lại.' : `Đã khóa quyền đăng tài liệu public; ${result?.hiddenDocuments || 0} tài liệu public đã chuyển sang HIDDEN.`);
+    } catch (err) {
+      setMessage(err.message || 'Không thể cập nhật quyền đăng tài liệu public của user.');
+    }
+  };
+
+  const handleStatusChange = async (document, nextStatus) => {
+    if (!nextStatus || nextStatus === document.status) return;
+    const reason = window.prompt(`Lý do đổi trạng thái sang ${nextStatus}:`, '') || '';
+    try {
+      const result = await api.updateLibraryDocumentStatus(document.id, { status: nextStatus, reason }, token);
+      const updated = result?.document || { ...document, status: nextStatus };
+      setDocuments((current) => current.map((doc) => doc.id === document.id ? { ...doc, ...updated, status: nextStatus } : doc));
+      setMessage(`Đã đổi trạng thái tài liệu sang ${nextStatus}.`);
+    } catch (err) {
+      setMessage(err.message || 'Không thể đổi trạng thái tài liệu.');
     }
   };
 
@@ -141,13 +176,13 @@ export default function AdminPage() {
     <div className="admin-page">
       <style>{STYLES}</style>
       <section className="admin-hero">
-        <h1>Quản trị Thư viện Hệ thống</h1>
-        <p>Import tài liệu để người dùng có thể tìm kiếm và tải xuống file gốc từ Thư viện Hệ thống.</p>
+        <h1>Quản trị Thư viện tài liệu</h1>
+        <p>Import tài liệu hệ thống và quản lý quyền đăng tài liệu của cộng đồng.</p>
       </section>
 
       <div className="admin-grid">
         <form className="admin-panel" onSubmit={handleImport}>
-          <h2>Import tài liệu</h2>
+          <h2>Import tài liệu hệ thống</h2>
           <label className={`admin-drop ${dragActive ? 'is-active' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragActive(true); }} onDragLeave={() => setDragActive(false)} onDrop={(event) => { event.preventDefault(); setDragActive(false); selectFile(event.dataTransfer.files?.[0] || null); }}>
             <UploadCloud size={32} />
             <strong>Kéo thả file hoặc chọn file</strong>
@@ -157,10 +192,21 @@ export default function AdminPage() {
           <label className="admin-field">Title override<input value={form.title} onChange={(event) => updateForm('title', event.target.value)} placeholder="Để trống sẽ dùng tên file" /></label>
           <label className="admin-field">Category override<input value={form.category} onChange={(event) => updateForm('category', event.target.value)} placeholder="Để trống để AI tự phân loại" /></label>
           <label className="admin-field">Tags override<input value={form.tags} onChange={(event) => updateForm('tags', event.target.value)} placeholder="pháp luật, doanh nghiệp" /></label>
+          <label className="admin-field">Citation threshold<input type="number" min="0" step="0.01" value={form.citationThreshold} onChange={(event) => updateForm('citationThreshold', event.target.value)} placeholder="Mặc định: 0" /></label>
           <button type="submit" className="admin-button" disabled={busy}>{busy ? <Loader2 className="spin" size={16} /> : <UploadCloud size={16} />} Import vào Thư viện</button>
           <div className="admin-stages">{importStages.map((stage) => <span key={stage.id} className={`admin-stage ${getStageState(stage.id)}`}><CheckCircle2 size={13} /> {stage.label}</span>)}</div>
           {progress > 0 && <div className="admin-progress"><span style={{ width: `${progress}%` }} /></div>}
           {message && <div className={`admin-status ${status === 'failed' ? 'is-error' : ''}`}>{status === 'failed' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />} {message}</div>}
+          <div className="admin-panel" style={{ marginTop: 18 }}>
+            <h2><ShieldAlert size={17} /> Quyền đăng tài liệu public</h2>
+            <p style={{ color: '#a79b8a', lineHeight: 1.6 }}>Khi tắt quyền, hệ thống cập nhật user và chuyển toàn bộ tài liệu PUBLISHED của user sang HIDDEN trong một transaction.</p>
+            <div>
+              <label className="admin-field">User ID<input value={permissionForm.userId} onChange={(event) => setPermissionForm((current) => ({ ...current, userId: event.target.value }))} placeholder="UUID user" /></label>
+              <label className="admin-field">Lý do mặc định<input value={permissionForm.reason} onChange={(event) => setPermissionForm((current) => ({ ...current, reason: event.target.value }))} placeholder="VD: spam, vi phạm nội quy..." /></label>
+              <label className="admin-field"><span><input type="checkbox" checked={permissionForm.canPublish} onChange={(event) => setPermissionForm((current) => ({ ...current, canPublish: event.target.checked }))} /> Quyền đăng tài liệu public</span></label>
+              <button type="button" className="admin-button" onClick={handlePermissionUpdate}>Cập nhật quyền</button>
+            </div>
+          </div>
         </form>
 
         <section className="admin-list">
@@ -171,12 +217,17 @@ export default function AdminPage() {
                 <div>
                   <h3><FileText size={18} /> {doc.title}</h3>
                   <div className="admin-meta">
-                    <span>{doc.filename}</span><span>•</span><span>{doc.file_type}</span><span>•</span><span>{doc.category || 'Khác'}</span><span>•</span><span>{doc.can_download ? 'có file gốc' : 'thiếu file gốc'}</span><span>•</span><span>{doc.is_vector_ready ? 'vector ready' : 'processing'}</span><span>•</span><span>{doc.created_at ? new Date(doc.created_at).toLocaleString('vi-VN') : '—'}</span>
+                    <span>{doc.filename}</span><span>•</span><span>{doc.file_type}</span><span>•</span><span>{doc.category || 'Khác'}</span><span>•</span><span className={`admin-status-badge ${doc.status || 'PUBLISHED'}`}>{doc.status || 'PUBLISHED'}</span><span>•</span><span>{doc.can_download ? 'có file gốc' : 'thiếu file gốc'}</span><span>•</span><span>{doc.is_vector_ready ? 'vector ready' : 'processing'}</span><span>•</span><span>{doc.created_at ? new Date(doc.created_at).toLocaleString('vi-VN') : '—'}</span>
                   </div>
                   <p>{doc.summary || 'Chưa có summary.'}</p>
                   <div className="admin-meta">{(doc.tags || []).map((tag) => <span key={tag} className="admin-tag">#{tag}</span>)}</div>
                 </div>
-                <button type="button" className="admin-delete" onClick={() => handleDelete(doc.id)} title="Xoá tài liệu"><Trash2 size={16} /></button>
+                <div className="admin-doc-actions">
+                  <select value={doc.status || 'PUBLISHED'} onChange={(event) => handleStatusChange(doc, event.target.value)} title="Đổi trạng thái tài liệu">
+                    {['PUBLISHED', 'PENDING_REVIEW', 'HIDDEN', 'REJECTED', 'DELETED'].map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                  <button type="button" className="admin-delete" onClick={() => handleDelete(doc.id)} title="Xoá tài liệu"><Trash2 size={16} /></button>
+                </div>
               </article>
             ))}
           </div>

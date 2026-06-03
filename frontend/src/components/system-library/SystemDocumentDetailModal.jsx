@@ -1,4 +1,4 @@
-import { Download, FileText, X } from 'lucide-react';
+import { Download, FileText, Star, X } from 'lucide-react';
 
 const formatDate = (value) => {
   if (!value) return 'Chưa có thông tin';
@@ -15,6 +15,23 @@ const formatFileSize = (bytes) => {
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 };
 
+function RatingStars({ rating, count }) {
+  const numeric = Number(rating);
+  const hasRating = Number.isFinite(numeric) && numeric > 0;
+  const litStars = hasRating ? Math.max(0, Math.min(5, Math.round(numeric))) : 0;
+  return (
+    <div className="sl-rating" aria-label={hasRating ? `Đánh giá ${numeric.toFixed(1)} trên 5` : 'Chưa có đánh giá'}>
+      <div className="sl-rating__stars">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <Star key={star} size={20} fill={star <= litStars ? 'currentColor' : 'none'} className={star <= litStars ? 'is-lit' : 'is-dim'} />
+        ))}
+      </div>
+      <strong>{hasRating ? `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}/5` : 'Chưa có đánh giá'}</strong>
+      {hasRating && <span className="sl-modal__muted">({Number(count) || 0} lượt đánh giá)</span>}
+    </div>
+  );
+}
+
 function DetailRow({ label, value }) {
   if (value === null || value === undefined || value === '') return null;
   return <div className="sl-modal__row"><span>{label}</span><strong>{value}</strong></div>;
@@ -22,7 +39,7 @@ function DetailRow({ label, value }) {
 
 export default function SystemDocumentDetailModal({ document, onClose, onDownload, downloading }) {
   if (!document) return null;
-  const title = document.title || document.filename || 'Tài liệu hệ thống';
+  const title = document.title || document.filename || 'Tài liệu';
   const summary = document.description || document.summary || document.ai_summary || 'Chưa có thông tin';
 
   return (
@@ -32,7 +49,7 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
         <header className="sl-modal__header">
           <span className="sl-modal__icon"><FileText size={22} /></span>
           <div>
-            <p>Chi tiết tài liệu</p>
+            <p>Chi tiết tài liệu cộng đồng</p>
             <h2>{title}</h2>
           </div>
         </header>
@@ -40,6 +57,10 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
           <section className="sl-modal__section">
             <h3>Mô tả / tóm tắt</h3>
             <p>{summary}</p>
+          </section>
+          <section className="sl-modal__section">
+            <h3>Đánh giá</h3>
+            <RatingStars rating={document.vote_avg ?? document.rating} count={document.vote_count ?? document.rating_count} />
           </section>
           <section className="sl-modal__section">
             <h3>Metadata</h3>
@@ -53,6 +74,16 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
               <DetailRow label="Số từ" value={document.word_count ?? 'Chưa có thông tin'} />
               <DetailRow label="Kích thước" value={formatFileSize(document.file_size)} />
               <DetailRow label="MIME type" value={document.mime_type || 'Chưa có thông tin'} />
+              <DetailRow label="Người đăng" value={document.uploader_name || 'Hệ thống'} />
+              <DetailRow label="Source type" value={document.source_type || 'SYSTEM_UPLOAD'} />
+              <DetailRow label="Status" value={document.status || 'PUBLISHED'} />
+              <DetailRow label="Peer-review" value={document.peer_review_status || 'UNKNOWN'} />
+              <DetailRow label="Access Type" value={document.access_type || 'UNKNOWN'} />
+              <DetailRow label="Review Type" value={document.review_type || 'UNKNOWN'} />
+              <DetailRow label="Has PDF / Code / Data" value={`${document.has_pdf ? 'PDF' : 'No PDF'} · ${document.has_code ? 'Code' : 'No Code'} · ${document.has_data ? 'Data' : 'No Data'}`} />
+              <DetailRow label="Trích dẫn / lượt tải" value={`${document.citation_count || 0} trích dẫn · ${document.download_count || 0} lượt tải`} />
+              <DetailRow label="DOI" value={document.doi || 'Chưa có thông tin'} />
+              <DetailRow label="URL" value={document.external_url || document.download_url || 'Chưa có thông tin'} />
             </div>
           </section>
           <section className="sl-modal__section">

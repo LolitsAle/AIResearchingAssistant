@@ -186,7 +186,7 @@ async def ask(
         )
 
     # 2. Vector search theo notebook_id (tìm trên tất cả file trong notebook)
-    retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids)
+    retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids, request.citation_threshold)
     chunks = retrieval.chunks
     warning = _warning_for_scope(retrieval.is_out_of_scope)
 
@@ -247,7 +247,7 @@ async def ask_stream(
                 return
 
             yield _sse({"type": "status", "status": "retrieving", "message": "Đang tìm đoạn liên quan..."})
-            retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids)
+            retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids, request.citation_threshold)
             chunks = retrieval.chunks
             warning = _warning_for_scope(retrieval.is_out_of_scope)
 

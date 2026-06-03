@@ -25,8 +25,8 @@ const NAV_ITEMS = [
   {
     to: '/system-library',
     icon: Library,
-    label: 'Thư viện Hệ thống',
-    description: 'Kho tài liệu được chuẩn hóa, tìm kiếm ngữ nghĩa và sẵn sàng cho RAG.',
+    label: 'Thư viện Cộng đồng',
+    description: 'Kho tài liệu cộng đồng được chuẩn hóa, tìm kiếm ngữ nghĩa và sẵn sàng cho RAG.',
   },
 ];
 
@@ -150,7 +150,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
   const navigate = useNavigate();
   const email = user?.email || 'researcher@local';
   const initial = (user?.name || email).trim().charAt(0).toUpperCase();
-  const navItems = user?.role === 'admin' ? [...NAV_ITEMS, { to: '/admin', icon: ShieldCheck, label: 'Quản trị', description: 'Import và quản lý tài liệu Thư viện Hệ thống.' }] : NAV_ITEMS;
+  const navItems = user?.role === 'admin' ? [...NAV_ITEMS, { to: '/admin', icon: ShieldCheck, label: 'Quản trị', description: 'Import và quản lý tài liệu Thư viện Cộng đồng.' }] : NAV_ITEMS;
 
 
   const handleLogout = async () => {
