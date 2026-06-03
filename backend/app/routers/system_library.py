@@ -12,9 +12,11 @@ from app.services.system_library_service import (
     content_disposition_for_filename,
     get_system_document_download,
     import_community_document_from_upload,
+    get_document_rating,
     import_internet_paper_to_library,
     list_or_search_documents,
     list_top_library_tags,
+    rate_document,
     remove_bookmark,
     vote_document,
 )
@@ -51,6 +53,11 @@ class SystemLibrarySearchRequest(BaseModel):
 
 
 class VoteRequest(BaseModel):
+    rating: int = Field(ge=1, le=5)
+
+
+class RatingRequest(BaseModel):
+    document_type: Literal["system_library", "community_library"] = "system_library"
     rating: int = Field(ge=1, le=5)
 
 
@@ -111,6 +118,7 @@ async def list_tags(user: dict = Depends(get_current_user)):
 async def upload_document(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
+    description: str | None = Form(default=None),
     category: str | None = Form(default=None),
     tags: str = Form(default=""),
     citation_threshold: float | None = Form(default=0),
@@ -122,6 +130,7 @@ async def upload_document(
         filename=file.filename or "library-document",
         user=user,
         title=title,
+        description=description,
         category=category,
         tags=tags,
         mime_type=file.content_type,
@@ -140,6 +149,20 @@ async def search_papers(body: PaperSearchRequest, user: dict = Depends(get_curre
 @router.post("/papers/import", response_model=dict)
 async def import_paper(body: ImportInternetPaperRequest, user: dict = Depends(get_current_user)):
     return {"success": True, "data": {"document": await import_internet_paper_to_library(body.paper, user)}}
+
+
+@router.get("/documents/{document_id}/rating", response_model=dict)
+async def get_rating(
+    document_id: str,
+    document_type: Literal["system_library", "community_library"] = "system_library",
+    user: dict = Depends(get_current_user),
+):
+    return {"success": True, "data": get_document_rating(document_id, user, document_type)}
+
+
+@router.post("/documents/{document_id}/rating", response_model=dict)
+async def rate(document_id: str, body: RatingRequest, user: dict = Depends(get_current_user)):
+    return {"success": True, "data": rate_document(document_id, user, body.rating, body.document_type)}
 
 
 @router.post("/documents/{document_id}/vote", response_model=dict)

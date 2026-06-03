@@ -438,6 +438,7 @@ export const api = {
     const formData = new FormData();
     formData.append("file", payload.file);
     formData.append("title", payload.title || "");
+    formData.append("description", payload.description || "");
     formData.append("category", payload.category || "");
     formData.append("tags", payload.tags || "");
     formData.append("citation_threshold", Number.isFinite(Number(payload.citationThreshold)) ? Number(payload.citationThreshold) : 0);
@@ -450,6 +451,23 @@ export const api = {
       })
     );
   },
+
+  getDocumentRating: (documentId, documentType = "system_library", token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/system-library/documents/${documentId}/rating`, {
+        params: { document_type: documentType },
+        headers: authHeader(token),
+      })
+    ),
+
+  rateDocument: (documentId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(
+        `/api/system-library/documents/${documentId}/rating`,
+        { document_type: payload.documentType || payload.document_type || "system_library", rating: payload.rating },
+        { headers: authHeader(token) }
+      )
+    ),
 
   voteSystemDocument: (documentId, rating, token) =>
     unwrapRequest(() => axiosInstance.post(`/api/system-library/documents/${documentId}/vote`, { rating }, { headers: authHeader(token) })),

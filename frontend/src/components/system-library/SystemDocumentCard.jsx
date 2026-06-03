@@ -4,7 +4,6 @@ import {
   Download,
   FileCode,
   FileText,
-  Star,
 } from "lucide-react";
 
 const formatNumber = (value) =>
@@ -12,6 +11,14 @@ const formatNumber = (value) =>
     notation: Number(value) >= 1000 ? "compact" : "standard",
   }).format(Number(value) || 0);
 const label = (value) => String(value || "UNKNOWN").replaceAll("_", " ");
+const formatDate = (value) => {
+  if (!value) return "Chưa rõ ngày";
+  try {
+    return new Date(value).toLocaleDateString("vi-VN");
+  } catch {
+    return "Chưa rõ ngày";
+  }
+};
 
 export default function SystemDocumentCard({
   document,
@@ -19,7 +26,6 @@ export default function SystemDocumentCard({
   onToggleTag,
   onOpenDetails,
   onDownload,
-  onVote,
   downloading,
 }) {
   const title =
@@ -55,16 +61,19 @@ export default function SystemDocumentCard({
       <div className="sl-card__body">
         <div className="sl-card__badges">
           <span className="sl-badge sl-badge--file">
-            {document.source_type || "SYSTEM_UPLOAD"}
+            {document.file_type || "FILE"}
           </span>
+          <span className="sl-badge">{document.source_type || "SYSTEM_UPLOAD"}</span>
           <span className="sl-badge">{label(document.peer_review_status)}</span>
-          <span className="sl-badge">{label(document.access_type)}</span>
         </div>
         <h3>{title}</h3>
         <p>{summary}</p>
         <div className="sl-card__meta">
           <span>
             Người đăng: <strong>{document.uploader_name || "Hệ thống"}</strong>
+          </span>
+          <span>
+            Cập nhật: <strong>{formatDate(document.updated_at || document.created_at)}</strong>
           </span>
         </div>
         <div className="sl-card__flags">
@@ -112,19 +121,6 @@ export default function SystemDocumentCard({
         >
           <Download size={16} /> {downloading ? "Đang tải..." : "Download"}
         </button>
-        <div className="sl-card__actions">
-          {[1, 2, 3, 4, 5].map((rating) => (
-            <button
-              key={rating}
-              type="button"
-              className="sl-star-btn"
-              onClick={() => onVote(document, rating)}
-              aria-label={`Vote ${rating} sao`}
-            >
-              <Star size={14} />
-            </button>
-          ))}
-        </div>
         <button
           type="button"
           className="sl-more-link"
