@@ -85,6 +85,7 @@ const STYLES = `
   .sl-card__flags span { opacity: .45; display: inline-flex; align-items: center; gap: 4px; }
   .sl-card__flags .is-on { opacity: 1; color: #f0d089; }
   .sl-modal-overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 18px; background: rgba(0,0,0,.62); }
+  .sl-tag-modal-overlay { z-index: 90; }
   .sl-modal { width: min(760px, 100%); max-height: min(86vh, 820px); display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.12); border-radius: 26px; background: #18140f; color: #efe6d8; box-shadow: 0 30px 110px rgba(0,0,0,.55); position: relative; }
   .sl-modal__close { position: absolute; top: 14px; right: 14px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #efe6d8; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; }
   .sl-modal__header { display: flex; gap: 14px; padding: 24px 26px 12px; }

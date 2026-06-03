@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Search, X } from "lucide-react";
 
 const FILTERS = {
@@ -76,8 +77,12 @@ function TagPickerModal({
     ? tags.filter(({ tag }) => tag.toLowerCase().includes(normalizedQuery))
     : tags;
 
-  return (
-    <div className="sl-modal-overlay" role="presentation" onClick={onClose}>
+  return createPortal(
+    <div
+      className="sl-modal-overlay sl-tag-modal-overlay"
+      role="presentation"
+      onClick={onClose}
+    >
       <section
         className="sl-modal sl-tag-modal"
         role="dialog"
@@ -134,7 +139,8 @@ function TagPickerModal({
           </div>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
