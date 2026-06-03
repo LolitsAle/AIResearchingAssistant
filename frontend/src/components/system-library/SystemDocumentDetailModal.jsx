@@ -22,7 +22,7 @@ function DetailRow({ label, value }) {
 
 export default function SystemDocumentDetailModal({ document, onClose, onDownload, downloading }) {
   if (!document) return null;
-  const title = document.title || document.filename || 'Tài liệu hệ thống';
+  const title = document.title || document.filename || 'Tài liệu';
   const summary = document.description || document.summary || document.ai_summary || 'Chưa có thông tin';
 
   return (
@@ -32,7 +32,7 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
         <header className="sl-modal__header">
           <span className="sl-modal__icon"><FileText size={22} /></span>
           <div>
-            <p>Chi tiết tài liệu</p>
+            <p>Chi tiết tài liệu cộng đồng</p>
             <h2>{title}</h2>
           </div>
         </header>
@@ -53,6 +53,16 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
               <DetailRow label="Số từ" value={document.word_count ?? 'Chưa có thông tin'} />
               <DetailRow label="Kích thước" value={formatFileSize(document.file_size)} />
               <DetailRow label="MIME type" value={document.mime_type || 'Chưa có thông tin'} />
+              <DetailRow label="Người đăng" value={document.uploader_name || 'Hệ thống'} />
+              <DetailRow label="Source type" value={document.source_type || 'SYSTEM_UPLOAD'} />
+              <DetailRow label="Status" value={document.status || 'PUBLISHED'} />
+              <DetailRow label="Peer-review" value={document.peer_review_status || 'UNKNOWN'} />
+              <DetailRow label="Access Type" value={document.access_type || 'UNKNOWN'} />
+              <DetailRow label="Review Type" value={document.review_type || 'UNKNOWN'} />
+              <DetailRow label="Has PDF / Code / Data" value={`${document.has_pdf ? 'PDF' : 'No PDF'} · ${document.has_code ? 'Code' : 'No Code'} · ${document.has_data ? 'Data' : 'No Data'}`} />
+              <DetailRow label="Citation / Vote / Download" value={`${document.citation_count || 0} citations · ${(Number(document.vote_avg) || 0).toFixed(1)} (${document.vote_count || 0}) · ${document.download_count || 0} downloads`} />
+              <DetailRow label="DOI" value={document.doi || 'Chưa có thông tin'} />
+              <DetailRow label="URL" value={document.external_url || document.download_url || 'Chưa có thông tin'} />
             </div>
           </section>
           <section className="sl-modal__section">

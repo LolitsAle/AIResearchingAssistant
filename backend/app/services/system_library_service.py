@@ -1,4 +1,4 @@
-"""System Library service for admin-managed RAG-ready documents."""
+"""Community document library service for curated, user-uploaded, and internet papers."""
 
 from __future__ import annotations
 
@@ -23,9 +23,14 @@ from app.services.llm import generate_system_document_metadata
 
 logger = logging.getLogger(__name__)
 
+DOCUMENT_STATUSES = {"PUBLISHED", "PENDING_REVIEW", "HIDDEN", "REJECTED", "DELETED"}
+USER_UPLOAD_DEFAULT_STATUS = "PENDING_REVIEW"
+
 SYSTEM_DOCUMENT_COLUMNS = (
     "id, title, filename, file_type, storage_path, download_url, file_size, mime_type, category, tags, "
-    "summary, page_count, word_count, is_vector_ready, created_by, created_at, updated_at"
+    "summary, page_count, word_count, is_vector_ready, created_by, created_at, updated_at, "
+    "source_type, status, peer_review_status, access_type, review_type, has_pdf, has_code, has_data, "
+    "citation_count, vote_avg, vote_count, download_count, uploader_name, doi, external_url"
 )
 
 
@@ -56,6 +61,20 @@ def _valid_uuid_or_none(value: str | None) -> str | None:
         return None
 
 
+def _first_present(row: dict, keys: Iterable[str], default: Any = None) -> Any:
+    for key in keys:
+        if row.get(key) is not None:
+            return row.get(key)
+    return default
+
+
+def _display_uploader(row: dict) -> str:
+    source_type = str(row.get("source_type") or "SYSTEM_UPLOAD").upper()
+    if source_type == "SYSTEM_UPLOAD" or row.get("uploaded_by_admin"):
+        return "Hệ thống"
+    return row.get("uploader_name") or row.get("created_by_name") or "Người dùng"
+
+
 def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dict:
     bookmarked_ids = bookmarked_ids or set()
     created_at = row.get("created_at")
@@ -73,17 +92,20 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
 
     category = row.get("category") or row.get("subject_area") or "Khác"
     summary = row.get("summary") or row.get("ai_summary") or row.get("description") or ""
+    source_type = str(row.get("source_type") or "SYSTEM_UPLOAD").upper()
+    has_pdf = bool(_first_present(row, ["has_pdf"], False) or str(row.get("file_type") or "").upper() == "PDF" or str(row.get("mime_type") or "").lower() == "application/pdf")
+    can_download = bool(row.get("storage_path") or (row.get("download_url") and row.get("access_type") in {"OPEN_ACCESS", "FREE_TO_READ", "open_access", "free_to_read"}))
 
     return {
         "id": str(row.get("id")),
-        "title": row.get("title") or row.get("filename") or "Tài liệu hệ thống",
+        "title": row.get("title") or row.get("filename") or "Tài liệu",
         "filename": row.get("filename") or "",
         "file_type": row.get("file_type") or "FILE",
         "storage_path": row.get("storage_path"),
         "download_url": row.get("download_url"),
         "file_size": row.get("file_size"),
         "mime_type": row.get("mime_type"),
-        "can_download": bool(row.get("storage_path") or row.get("download_url")),
+        "can_download": can_download,
         "description": row.get("description") or summary,
         "category": category,
         "subject_area": category,
@@ -97,6 +119,21 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
         "updated_at": row.get("updated_at"),
         "created_at": row.get("created_at"),
         "created_by": row.get("created_by"),
+        "uploader_name": _display_uploader(row),
+        "source_type": source_type,
+        "status": str(row.get("status") or "PUBLISHED").upper(),
+        "peer_review_status": str(row.get("peer_review_status") or "UNKNOWN").upper(),
+        "access_type": str(row.get("access_type") or "UNKNOWN").upper(),
+        "review_type": str(row.get("review_type") or "UNKNOWN").upper(),
+        "has_pdf": has_pdf,
+        "has_code": bool(row.get("has_code", False)),
+        "has_data": bool(row.get("has_data", False)),
+        "citation_count": int(row.get("citation_count") or 0),
+        "vote_avg": float(row.get("vote_avg") or 0),
+        "vote_count": int(row.get("vote_count") or 0),
+        "download_count": int(row.get("download_count") or 0),
+        "doi": row.get("doi"),
+        "external_url": row.get("external_url") or row.get("url"),
         "bookmarked_by_current_user": str(row.get("id")) in bookmarked_ids or bool(row.get("bookmarked_by_current_user", False)),
         "is_bookmarked": str(row.get("id")) in bookmarked_ids or bool(row.get("bookmarked_by_current_user", False)),
         "semantic_score": row.get("similarity") or row.get("score"),
@@ -106,6 +143,146 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
 def require_admin(user: dict) -> None:
     if str(user.get("role") or "user").lower() != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "ADMIN_FORBIDDEN", "message": "Chỉ admin mới được truy cập chức năng này"})
+
+
+def _profile_for_user_id(user_id: str) -> dict:
+    for table in ("profiles", "users"):
+        try:
+            resp = supabase.table(table).select("*").eq("id", user_id).limit(1).execute()
+            rows, error = _supabase_response_data(resp)
+            if not error and rows:
+                return rows[0]
+        except Exception:
+            continue
+    return {}
+
+
+def _profile_publish_allowed(profile: dict) -> bool:
+    value = profile.get("can_publish_documents")
+    if value is None:
+        value = profile.get("can_upload_library_documents")
+    return value is not False
+
+
+def _user_can_publish_documents(user: dict) -> bool:
+    if str(user.get("role") or "user").lower() == "admin":
+        return True
+    profile = _profile_for_user_id(_get_user_id(user))
+    return _profile_publish_allowed(profile)
+
+
+def require_library_publish_allowed(user: dict) -> None:
+    if not _user_can_publish_documents(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "LIBRARY_PUBLISH_LOCKED", "message": "Tài khoản của bạn đã bị tạm khóa quyền đăng tài liệu. Vui lòng liên hệ quản trị viên."},
+        )
+
+
+def _normalize_document_status(value: str | None, default: str = "PUBLISHED") -> str:
+    normalized = str(value or default).upper()
+    if normalized not in DOCUMENT_STATUSES:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_DOCUMENT_STATUS", "message": "Trạng thái tài liệu không hợp lệ."})
+    return normalized
+
+
+def set_user_publish_permission(user_id: str, can_publish: bool, reason: str | None = None) -> dict:
+    """Update user publish permission and hide public user uploads in one DB transaction.
+
+    The SQL migration defines `public.set_user_publish_permission`, which executes
+    the profile/user update and document status transition atomically.
+    """
+
+    try:
+        resp = supabase.rpc(
+            "set_user_publish_permission",
+            {
+                "target_user_id": user_id,
+                "can_publish": can_publish,
+                "blocked_reason": reason,
+            },
+        ).execute()
+        rows, error = _supabase_response_data(resp)
+        if error:
+            raise RuntimeError(error)
+        result = rows[0] if isinstance(rows, list) and rows else (rows or {})
+    except Exception as exc:
+        logger.exception("Set user publish permission transaction failed")
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "PUBLISH_PERMISSION_UPDATE_FAILED", "message": "Không thể cập nhật quyền đăng tài liệu của user."},
+        ) from exc
+    return {
+        "user_id": user_id,
+        "canPublishDocuments": can_publish,
+        "publishBlockedReason": None if can_publish else reason,
+        "publishBlockedAt": None if can_publish else result.get("publish_blocked_at"),
+        "hiddenDocuments": int(result.get("hidden_documents") or 0),
+    }
+
+
+def set_user_library_upload_permission(user_id: str, can_upload: bool, hidden_status: str = "HIDDEN") -> dict:
+    # Backwards-compatible wrapper for the previous admin endpoint. New code should
+    # call set_user_publish_permission, which always hides published documents.
+    _ = hidden_status
+    return set_user_publish_permission(user_id, can_upload)
+
+
+def update_library_document_status(document_id: str, next_status: str, reason: str | None = None, admin_user: dict | None = None) -> dict:
+    _ = admin_user
+    status_value = _normalize_document_status(next_status)
+    try:
+        payload = {"status": status_value, "status_reason": reason}
+        resp = supabase.table("system_documents").update(payload).eq("id", document_id).execute()
+        rows, error = _supabase_response_data(resp)
+    except Exception as exc:
+        logger.exception("Update library document status failed")
+        raise HTTPException(status_code=500, detail={"code": "DOCUMENT_STATUS_UPDATE_FAILED", "message": "Không thể cập nhật trạng thái tài liệu."}) from exc
+    if error:
+        raise HTTPException(status_code=500, detail={"code": "DOCUMENT_STATUS_UPDATE_FAILED", "message": "Không thể cập nhật trạng thái tài liệu."})
+    if not rows:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu."})
+    return {"document": normalize_document(rows[0]), "status": status_value, "reason": reason}
+
+
+def list_top_library_tags(limit: int = 24) -> dict:
+    try:
+        resp = supabase.table("system_documents").select("tags").eq("status", "PUBLISHED").limit(1000).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc):
+            return {"tags": []}
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải tag gợi ý."}) from exc
+    rows, error = _supabase_response_data(resp)
+    if error:
+        return {"tags": []}
+    counts: dict[str, int] = {}
+    for row in rows or []:
+        for tag in _parse_tags(row.get("tags")):
+            counts[tag] = counts.get(tag, 0) + 1
+    tags = [{"tag": tag, "count": count} for tag, count in sorted(counts.items(), key=lambda item: (-item[1], item[0].lower()))[:limit]]
+    return {"tags": tags}
+
+
+def vote_document(document_id: str, user: dict, rating: int) -> dict:
+    user_id = _get_user_id(user)
+    rating = max(1, min(5, int(rating)))
+    docs = get_documents_by_ids([document_id])
+    if not docs:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu."})
+    try:
+        supabase.table("system_document_votes").upsert({"user_id": user_id, "document_id": document_id, "rating": rating}, on_conflict="user_id,document_id").execute()
+        votes_resp = supabase.table("system_document_votes").select("rating").eq("document_id", document_id).execute()
+        votes, vote_error = _supabase_response_data(votes_resp)
+        if vote_error:
+            raise RuntimeError(vote_error)
+        ratings = [int(v.get("rating") or 0) for v in votes or []]
+        vote_count = len(ratings)
+        vote_avg = round(sum(ratings) / vote_count, 2) if vote_count else 0
+        supabase.table("system_documents").update({"vote_avg": vote_avg, "vote_count": vote_count}).eq("id", document_id).execute()
+    except Exception as exc:
+        logger.exception("Vote document failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể cập nhật đánh giá tài liệu."}) from exc
+    return {"document_id": document_id, "rating": rating, "vote_avg": vote_avg, "vote_count": vote_count}
 
 
 def _format_system_file_type(file_type: str) -> str:
@@ -187,11 +364,11 @@ def _upload_original_file_to_storage(path: str, file_contents: bytes, mime_type:
         ) from exc
 
 
-def get_system_document_download(document_id: str) -> dict:
+def get_system_document_download(document_id: str, user: dict | None = None) -> dict:
     try:
         resp = (
             supabase.table("system_documents")
-            .select("id, title, filename, original_filename, file_type, storage_path, download_url, file_size, mime_type")
+            .select("id, title, filename, original_filename, file_type, storage_path, download_url, file_size, mime_type, access_type, download_count, status, created_by")
             .eq("id", document_id)
             .single()
             .execute()
@@ -200,7 +377,7 @@ def get_system_document_download(document_id: str) -> dict:
         try:
             resp = (
                 supabase.table("system_documents")
-                .select("id, title, filename, file_type, storage_path, download_url, file_size, mime_type")
+                .select("id, title, filename, file_type, storage_path, download_url, file_size, mime_type, access_type, download_count, status, created_by")
                 .eq("id", document_id)
                 .single()
                 .execute()
@@ -214,7 +391,7 @@ def get_system_document_download(document_id: str) -> dict:
         try:
             retry_resp = (
                 supabase.table("system_documents")
-                .select("id, title, filename, file_type, storage_path, download_url, file_size, mime_type")
+                .select("id, title, filename, file_type, storage_path, download_url, file_size, mime_type, access_type, download_count, status, created_by")
                 .eq("id", document_id)
                 .single()
                 .execute()
@@ -223,8 +400,11 @@ def get_system_document_download(document_id: str) -> dict:
         except Exception as exc:
             logger.exception("Retry lookup system document download metadata failed")
             raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải tài liệu."}) from exc
-    if error or not row:
-        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu hệ thống."})
+    current_status = str(row.get("status") or "PUBLISHED").upper()
+    current_user_id = str((user or {}).get("id") or (user or {}).get("user_id") or "")
+    is_owner_or_admin = bool(user and (str(user.get("role") or "user").lower() == "admin" or str(row.get("created_by")) == current_user_id))
+    if error or not row or (current_status != "PUBLISHED" and not is_owner_or_admin):
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu hoặc tài liệu không còn được công khai."})
 
     filename = _display_download_filename(row)
     storage_path = row.get("storage_path")
@@ -233,13 +413,21 @@ def get_system_document_download(document_id: str) -> dict:
 
     if storage_path:
         try:
+            supabase.table("system_documents").update({"download_count": int(row.get("download_count") or 0) + 1}).eq("id", document_id).execute()
+        except Exception:
+            logger.info("Could not increment library document download_count")
+        try:
             contents = supabase.storage.from_(settings.SYSTEM_LIBRARY_STORAGE_BUCKET).download(storage_path)
         except Exception as exc:
             logger.exception("Download original system document from storage failed")
             raise HTTPException(status_code=404, detail={"code": "FILE_NOT_FOUND", "message": "Không tìm thấy file để tải xuống."}) from exc
         return {"type": "bytes", "content": contents, "filename": filename, "mime_type": mime_type}
 
-    if download_url:
+    if download_url and str(row.get("access_type") or "").upper() in {"OPEN_ACCESS", "FREE_TO_READ"}:
+        try:
+            supabase.table("system_documents").update({"download_count": int(row.get("download_count") or 0) + 1}).eq("id", document_id).execute()
+        except Exception:
+            logger.info("Could not increment library document download_count")
         return {"type": "redirect", "url": download_url}
 
     raise HTTPException(status_code=404, detail={"code": "FILE_NOT_FOUND", "message": "Không tìm thấy file để tải xuống."})
@@ -296,6 +484,9 @@ async def import_system_document_from_upload(
     category: str | None = None,
     tags: str | list[str] | None = None,
     mime_type: str | None = None,
+    source_type: str = "SYSTEM_UPLOAD",
+    document_status: str = "PUBLISHED",
+    uploader_name: str = "Hệ thống",
 ) -> dict:
     """Parse, chunk, embed, auto-catalog, and persist an admin-uploaded System Library document."""
     max_size_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
@@ -333,6 +524,19 @@ async def import_system_document_from_upload(
         "file_size": len(file_contents),
         "mime_type": resolved_mime_type,
         "created_by": _valid_uuid_or_none(created_by),
+        "uploader_name": uploader_name,
+        "source_type": source_type,
+        "status": _normalize_document_status(document_status),
+        "peer_review_status": "UNKNOWN",
+        "access_type": "OPEN_ACCESS",
+        "review_type": "UNKNOWN",
+        "has_pdf": _format_system_file_type(parsed_file_type) == "PDF",
+        "has_code": False,
+        "has_data": False,
+        "citation_count": 0,
+        "download_count": 0,
+        "vote_avg": 0,
+        "vote_count": 0,
         "is_vector_ready": False,
     }
 
@@ -418,29 +622,51 @@ def _query_bookmarked_ids(user_id: str) -> set[str]:
 
 
 def _apply_filters(query: Any, filters: dict) -> Any:
-    categories = filters.get("categories") or []
-    file_types = filters.get("file_types") or []
-    vector_status = filters.get("vector_status") or []
     tags = filters.get("tags") or []
-    updated_ranges = filters.get("updated_ranges") or []
+    peer_review_status = filters.get("peer_review_status") or []
+    access_types = filters.get("access_types") or filters.get("access_type") or []
+    review_types = filters.get("review_types") or filters.get("review_type") or []
+    source_types = filters.get("source_types") or []
+    statuses = filters.get("statuses") or ["PUBLISHED"]
 
-    if categories:
-        query = query.in_("category", categories)
-    if file_types:
-        query = query.in_("file_type", file_types)
-    if len(vector_status) == 1:
-        query = query.eq("is_vector_ready", vector_status[0] == "ready")
+    if statuses:
+        query = query.in_("status", statuses)
+    if source_types:
+        query = query.in_("source_type", source_types)
+    if peer_review_status:
+        query = query.in_("peer_review_status", peer_review_status)
+    if access_types:
+        query = query.in_("access_type", access_types)
+    if review_types:
+        query = query.in_("review_type", review_types)
+    if filters.get("has_pdf"):
+        query = query.eq("has_pdf", True)
+    if filters.get("has_data"):
+        query = query.eq("has_data", True)
+    if filters.get("has_code"):
+        query = query.eq("has_code", True)
+    citation_min = filters.get("citation_count_min")
+    if citation_min not in (None, ""):
+        query = query.gte("citation_count", int(citation_min))
     if tags:
         query = query.contains("tags", tags)
-    if updated_ranges:
-        now = datetime.now(timezone.utc)
-        if "week" in updated_ranges:
-            query = query.gte("updated_at", (now - timedelta(days=7)).isoformat())
-        elif "month" in updated_ranges:
-            query = query.gte("updated_at", (now - timedelta(days=31)).isoformat())
-        elif "year" in updated_ranges:
-            query = query.gte("updated_at", (now - timedelta(days=365)).isoformat())
     return query
+
+
+def _apply_sort(query: Any, sort: str, has_query: bool) -> Any:
+    sort = str(sort or "newest")
+    if sort == "title_az":
+        return query.order("title", desc=False)
+    if sort == "title_za":
+        return query.order("title", desc=True)
+    if sort == "vote_highest":
+        return query.order("vote_avg", desc=True).order("vote_count", desc=True)
+    if sort == "citation_highest":
+        return query.order("citation_count", desc=True)
+    if sort == "download_highest":
+        return query.order("download_count", desc=True)
+    # semantic_relevance is handled after vector ranking when a search query exists.
+    return query.order("created_at", desc=True)
 
 
 async def _semantic_ranked_rows(query_text: str, candidate_rows: list[dict]) -> list[dict] | None:
@@ -493,29 +719,34 @@ def _metadata_matches(row: dict, terms: list[str]) -> bool:
 async def list_or_search_documents(user: dict, query_text: str = "", filters: dict | None = None) -> dict:
     user_id = _get_user_id(user)
     filters = filters or {}
+    my_documents = bool(filters.get("my_documents"))
+    if my_documents:
+        filters = {**filters, "statuses": sorted(DOCUMENT_STATUSES)}
     bookmarked_ids = _query_bookmarked_ids(user_id)
     bookmarked_only = bool(filters.get("bookmarked"))
 
     try:
         query = supabase.table("system_documents").select(SYSTEM_DOCUMENT_COLUMNS)
         query = _apply_filters(query, filters)
+        if my_documents:
+            query = query.eq("created_by", user_id)
         if bookmarked_only:
             if not bookmarked_ids:
                 return {"documents": [], "total": 0}
             query = query.in_("id", list(bookmarked_ids))
-        query = query.order("updated_at", desc=True).limit(100)
+        query = _apply_sort(query, filters.get("sort"), bool(str(query_text or "").strip())).limit(100)
         resp = query.execute()
     except Exception as exc:
         if _is_missing_table_error(exc):
             return {"documents": [], "total": 0}
         logger.exception("List system documents failed")
-        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện Hệ thống"}) from exc
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"}) from exc
 
     rows, error = _supabase_response_data(resp)
     if error:
         if _is_missing_table_error(error):
             return {"documents": [], "total": 0}
-        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện Hệ thống"})
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"})
 
     rows = rows or []
     if str(query_text or "").strip():
@@ -601,3 +832,84 @@ def remove_bookmark(document_id: str, user: dict) -> dict:
     if error:
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể bỏ ghim tài liệu"})
     return {"document_id": document_id, "bookmarked": False}
+
+async def import_community_document_from_upload(
+    *,
+    file_contents: bytes,
+    filename: str,
+    user: dict,
+    title: str | None = None,
+    category: str | None = None,
+    tags: str | list[str] | None = None,
+    mime_type: str | None = None,
+) -> dict:
+    require_library_publish_allowed(user)
+    user_id = _get_user_id(user)
+    profile = _profile_for_user_id(user_id)
+    uploader_name = profile.get("display_name") or profile.get("full_name") or user.get("name") or user.get("email") or "Người dùng"
+    default_status = "PUBLISHED" if str(user.get("role") or "user").lower() == "admin" else USER_UPLOAD_DEFAULT_STATUS
+    document = await import_system_document_from_upload(
+        file_contents=file_contents,
+        filename=filename,
+        created_by=user_id,
+        title=title,
+        category=category,
+        tags=tags,
+        mime_type=mime_type,
+        source_type="USER_UPLOAD",
+        document_status=default_status,
+        uploader_name=uploader_name,
+    )
+    try:
+        payload = {"source_type": "USER_UPLOAD", "uploader_name": uploader_name, "status": default_status}
+        resp = supabase.table("system_documents").update(payload).eq("id", document["id"]).execute()
+        rows, error = _supabase_response_data(resp)
+        if not error and rows:
+            return normalize_document(rows[0])
+    except Exception:
+        logger.info("Could not update uploaded document community metadata; returning base document")
+    return {**document, "source_type": "USER_UPLOAD", "uploader_name": uploader_name, "status": default_status}
+
+
+def import_internet_paper_to_library(paper: dict, user: dict) -> dict:
+    require_library_publish_allowed(user)
+    user_id = _get_user_id(user)
+    profile = _profile_for_user_id(user_id)
+    default_status = "PUBLISHED" if str(user.get("role") or "user").lower() == "admin" else USER_UPLOAD_DEFAULT_STATUS
+    uploader_name = profile.get("display_name") or profile.get("full_name") or user.get("name") or user.get("email") or "Người dùng"
+    payload = {
+        "title": paper.get("title") or "Internet paper",
+        "filename": paper.get("title") or paper.get("externalId") or "internet-paper",
+        "file_type": "PDF" if paper.get("hasPdf") else "LINK",
+        "download_url": paper.get("pdfUrl") if paper.get("isOpenAccess") else None,
+        "mime_type": "application/pdf" if paper.get("hasPdf") else None,
+        "category": "Internet",
+        "tags": _parse_tags(paper.get("tags") or [paper.get("source") or "internet"]),
+        "summary": paper.get("abstract") or "",
+        "created_by": _valid_uuid_or_none(user_id),
+        "uploader_name": uploader_name,
+        "source_type": "INTERNET",
+        "status": default_status,
+        "peer_review_status": paper.get("peerReviewStatus") or "UNKNOWN",
+        "access_type": paper.get("accessType") or ("OPEN_ACCESS" if paper.get("isOpenAccess") else "UNKNOWN"),
+        "review_type": paper.get("reviewType") or "UNKNOWN",
+        "has_pdf": bool(paper.get("hasPdf")),
+        "has_code": bool(paper.get("hasCode")),
+        "has_data": bool(paper.get("hasData")),
+        "citation_count": int(paper.get("citationCount") or 0),
+        "doi": paper.get("doi"),
+        "external_url": paper.get("url"),
+        "download_count": 0,
+        "vote_avg": 0,
+        "vote_count": 0,
+        "is_vector_ready": False,
+    }
+    try:
+        resp = supabase.table("system_documents").insert(payload).execute()
+        rows, error = _supabase_response_data(resp)
+    except Exception as exc:
+        logger.exception("Import internet paper failed")
+        raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể import paper vào thư viện."}) from exc
+    if error or not rows:
+        raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể import paper vào thư viện."})
+    return normalize_document(rows[0])
