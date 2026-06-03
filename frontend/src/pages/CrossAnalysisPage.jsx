@@ -1,14 +1,37 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Columns, Download, FileText, GitCompare, Info, Loader2, Merge, MessageSquare, Search, UploadCloud, Trash2, WandSparkles, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Columns, Download, FileText, GitCompare, Info, Loader2, Merge, MessageSquare, Save, Search, UploadCloud, Trash2, WandSparkles, X } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 const CRITERIA = [
   { key: 'problem_motivation', label: 'Vấn đề & Động lực nghiên cứu', hint: 'Mục tiêu, giả định và động lực nghiên cứu.' },
   { key: 'methodology', label: 'Phương pháp tiếp cận', hint: 'Thuật toán, kiến trúc, tính mới và chi phí.' },
-  { key: 'datasets_experiments', label: 'Dữ liệu & Thiết lập thực nghiệm', hint: 'Datasets, baselines, metrics và fairness.' },
+  { key: 'datasets_experimental_setup', label: 'Dữ liệu & Thiết lập thực nghiệm', hint: 'Datasets, baselines, metrics và fairness.' },
   { key: 'results_tradeoffs', label: 'Kết quả & Đánh đổi', hint: 'Điều kiện thắng, ablation, tốc độ và độ chính xác.' },
   { key: 'scalability_limitations', label: 'Khả năng mở rộng & Hạn chế', hint: 'Ứng dụng thực tiễn, rủi ro production, future work.' },
+  { key: 'contribution', label: 'Đóng góp chính', hint: 'Đóng góp, giá trị mới và phạm vi ảnh hưởng.' },
+  { key: 'clarity', label: 'Độ rõ ràng', hint: 'Cấu trúc trình bày và mức độ dễ đọc.' },
+  { key: 'relevance', label: 'Mức độ liên quan', hint: 'Mức độ phù hợp với mục tiêu đọc.' },
+  { key: 'practical_value', label: 'Giá trị thực tiễn', hint: 'Khả năng ứng dụng và tác động thực tế.' },
+  { key: 'limitations', label: 'Hạn chế', hint: 'Điểm yếu và rủi ro diễn giải.' },
+  { key: 'complexity', label: 'Độ phức tạp', hint: 'Compute, bộ nhớ, latency và tài nguyên.' },
+  { key: 'dependencies', label: 'Phụ thuộc kỹ thuật', hint: 'Thư viện, dữ liệu, mô hình, hạ tầng.' },
+  { key: 'deployment_risk', label: 'Rủi ro triển khai', hint: 'Rủi ro production, bảo mật và vận hành.' },
+  { key: 'scalability', label: 'Khả năng mở rộng', hint: 'Mở rộng dữ liệu, người dùng và hạ tầng.' },
+  { key: 'cost', label: 'Chi phí', hint: 'Compute, vận hành, nhân lực và hạ tầng.' },
+  { key: 'research_gap', label: 'Khoảng trống nghiên cứu', hint: 'Gap trong literature và câu hỏi mở.' },
+  { key: 'novelty', label: 'Tính mới', hint: 'Đóng góp mới và khác biệt.' },
+  { key: 'assumptions', label: 'Giả định', hint: 'Điều kiện và tiền đề áp dụng.' },
+  { key: 'disagreement', label: 'Điểm bất đồng', hint: 'Các nhận định hoặc kết quả không thống nhất.' },
+  { key: 'future_work', label: 'Hướng nghiên cứu tiếp theo', hint: 'Future work và mở rộng.' },
+];
+
+const PRESETS = [
+  { key: 'academic', label: 'So sánh học thuật', criteria: ['problem_motivation', 'methodology', 'datasets_experimental_setup', 'results_tradeoffs', 'scalability_limitations'] },
+  { key: 'reading_choice', label: 'Chọn tài liệu nên đọc', criteria: ['contribution', 'clarity', 'relevance', 'practical_value', 'limitations'] },
+  { key: 'technical_deployment', label: 'Triển khai kỹ thuật', criteria: ['complexity', 'dependencies', 'deployment_risk', 'scalability', 'cost'] },
+  { key: 'literature_review', label: 'Viết literature review', criteria: ['research_gap', 'novelty', 'assumptions', 'disagreement', 'future_work'] },
+  { key: 'custom', label: 'Custom', criteria: [] },
 ];
 
 const STYLES = `
@@ -78,7 +101,30 @@ const STYLES = `
   .ca-modal-list { display:grid; gap:10px; margin-top:12px; }
   .ca-modal-doc { text-align:left; border:1px solid rgba(255,255,255,.08); border-radius:16px; background:rgba(255,255,255,.035); padding:12px; color:#d8cfc0; cursor:pointer; }
   .ca-modal-doc:hover { border-color:rgba(196,164,100,.28); }
-  @media (max-width: 900px) { .ca-picker-grid, .ca-split { grid-template-columns: 1fr; } .ca-chat-form { grid-template-columns: 1fr; } }
+
+  .ca-preset-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-top:14px; }
+  .ca-preset { text-align:left; border:1px solid rgba(255,255,255,.08); border-radius:16px; background:rgba(0,0,0,.14); color:#d8cfc0; padding:12px; cursor:pointer; }
+  .ca-preset.active { border-color:rgba(212,182,111,.45); background:rgba(212,182,111,.12); color:#f2d48b; }
+  .ca-filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:12px 0; }
+  .ca-select { border:1px solid rgba(255,255,255,.09); background:#17130e; color:#eee6d8; border-radius:12px; padding:9px 11px; }
+  .ca-status { display:inline-flex; border-radius:999px; padding:4px 9px; font-size:11px; font-weight:900; border:1px solid rgba(255,255,255,.1); color:#f2d48b; background:rgba(196,164,100,.08); }
+  .ca-expand-btn { padding:6px 8px; border-radius:10px; }
+  .ca-expanded { background:rgba(0,0,0,.2); }
+  .ca-evidence-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .ca-evidence-card { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:12px; background:rgba(255,255,255,.035); }
+  .ca-evidence-card h4 { margin:0 0 8px; color:#f2d48b; }
+  .ca-evidence-item { margin-top:9px; padding-top:9px; border-top:1px solid rgba(255,255,255,.07); }
+  .ca-evidence-meta { color:#d8bd77; font-size:12px; font-weight:800; }
+  .ca-row-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .ca-mini-btn { border-radius:999px; padding:7px 10px; font-size:12px; }
+  .ca-quick { border:1px solid rgba(104,185,132,.2); background:rgba(104,185,132,.07); border-radius:18px; padding:14px; margin:12px 0; color:#d8cfc0; }
+  .ca-quick h3 { margin:0 0 8px; color:#aee0bb; }
+  .ca-quick-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+  .ca-sessions { margin-top:14px; border-top:1px solid rgba(255,255,255,.08); padding-top:12px; }
+  .ca-session-list { display:grid; gap:8px; margin-top:8px; }
+  .ca-session { text-align:left; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.035); color:#d8cfc0; border-radius:12px; padding:9px; cursor:pointer; }
+  .ca-chat-context { margin:0 0 10px; border:1px solid rgba(212,182,111,.25); background:rgba(212,182,111,.08); color:#f2d48b; border-radius:14px; padding:10px; display:flex; justify-content:space-between; gap:10px; }
+  @media (max-width: 900px) { .ca-picker-grid, .ca-split, .ca-evidence-grid { grid-template-columns: 1fr; } .ca-chat-form { grid-template-columns: 1fr; } }
 `;
 
 function sourceLabel(doc) {
@@ -105,6 +151,18 @@ const CRITERION_LABELS = {
   problem_motivation: 'Vấn đề & Động lực nghiên cứu',
   methodology: 'Phương pháp tiếp cận',
   datasets_experiments: 'Dữ liệu & Thiết lập thực nghiệm',
+  contribution: 'Đóng góp chính',
+  clarity: 'Độ rõ ràng',
+  relevance: 'Mức độ liên quan',
+  practical_value: 'Giá trị thực tiễn',
+  dependencies: 'Phụ thuộc kỹ thuật',
+  deployment_risk: 'Rủi ro triển khai',
+  scalability: 'Khả năng mở rộng',
+  cost: 'Chi phí',
+  research_gap: 'Khoảng trống nghiên cứu',
+  assumptions: 'Giả định',
+  disagreement: 'Điểm bất đồng',
+  future_work: 'Hướng nghiên cứu tiếp theo',
   datasets_experimental_setup: 'Dữ liệu & Thiết lập thực nghiệm',
   results_tradeoffs: 'Kết quả & Đánh đổi',
   scalability_limitations: 'Khả năng mở rộng & Hạn chế',
@@ -135,9 +193,10 @@ function formatConfidence(confidence) {
 
 function confidenceTitle(row = {}) {
   const basis = row.confidence_basis || {};
+  if (basis.reason) return basis.reason;
   if (typeof row.confidence === 'number' && Number.isFinite(row.confidence)) {
-    const score = typeof basis.average_retrieval_score === 'number' ? ` và điểm truy xuất trung bình ${basis.average_retrieval_score.toFixed(2)}` : '';
-    return `Dựa trên ${basis.citation_count || 0} trích dẫn hợp lệ${score}.`;
+    const score = typeof basis.avg_score === 'number' ? ` và điểm truy xuất trung bình ${basis.avg_score.toFixed(2)}` : '';
+    return `Dựa trên ${basis.evidence_count_a || 0} bằng chứng A và ${basis.evidence_count_b || 0} bằng chứng B${score}.`;
   }
   return 'Chưa đủ dữ liệu nguồn để ước tính.';
 }
@@ -175,6 +234,58 @@ function downloadCsv(rows) {
   const link = document.createElement('a');
   link.href = url;
   link.download = `cross-analysis-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+
+const STATUS_LABELS = {
+  similar: 'Giống nhau',
+  different: 'Khác nhau',
+  conflict: 'Mâu thuẫn',
+  missing_information: 'Thiếu thông tin',
+  needs_review: 'Cần kiểm tra',
+};
+
+function confidenceBasisText(row = {}) {
+  return row.confidence_basis?.reason || confidenceTitle(row);
+}
+
+function downloadMarkdown(result, rows) {
+  if (!result) return;
+  const qc = result.quick_conclusion || {};
+  const lines = ['# Đối chiếu Hai Tài liệu', ''];
+  if (qc.summary) lines.push('## Kết luận nhanh', '', qc.summary, '');
+  const sections = [
+    ['Giống nhau', qc.similarities],
+    ['Khác nhau chính', qc.key_differences],
+    ['Mâu thuẫn đáng chú ý', qc.notable_conflicts],
+    ['Điểm cần kiểm chứng', qc.needs_verification],
+  ];
+  sections.forEach(([title, items]) => {
+    if (items?.length) lines.push(`### ${title}`, ...items.map((item) => `- ${item}`), '');
+  });
+  if (qc.recommended_reading_order) lines.push('### Nên đọc trước', qc.recommended_reading_order, '');
+  lines.push('## Bảng so sánh', '', '| Tiêu chí | Tài liệu A | Tài liệu B | Nhận xét | Status | Confidence |', '|---|---|---|---|---|---|');
+  rows.forEach((row) => {
+    lines.push(`| ${mapCriterionLabel(row.criterion, row.criterion_label)} | ${String(row.document_a || '').replace(/\|/g, '\\|')} | ${String(row.document_b || '').replace(/\|/g, '\\|')} | ${String(row.analysis || '').replace(/\|/g, '\\|')} | ${STATUS_LABELS[row.status] || row.status || ''} | ${formatConfidence(row.confidence)} |`);
+  });
+  rows.forEach((row) => {
+    lines.push('', `## Evidence: ${mapCriterionLabel(row.criterion, row.criterion_label)}`, '', `Confidence basis: ${confidenceBasisText(row)}`, '');
+    [['A', row.evidence_a], ['B', row.evidence_b]].forEach(([label, evidence]) => {
+      lines.push(`### Tài liệu ${label}`);
+      if (!evidence?.length) lines.push('- Không tìm thấy bằng chứng hợp lệ.');
+      (evidence || []).forEach((item) => lines.push(`- ${item.document_title || 'Tài liệu'} · trang ${item.page ?? '?'} · ${item.section || 'Không rõ section'} · score ${typeof item.score === 'number' ? item.score.toFixed(2) : 'N/A'}\n  > ${item.snippet || ''}`));
+      lines.push('');
+    });
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `doi-chieu-hai-tai-lieu-${new Date().toISOString().slice(0, 10)}.md`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -251,6 +362,88 @@ function SystemDocumentPickerModal({ open, onClose, onSelect }) {
         )}
       </section>
     </div>
+  );
+}
+
+
+function QuickConclusionCard({ conclusion }) {
+  if (!conclusion) return null;
+  const blocks = [
+    ['Giống nhau', conclusion.similarities],
+    ['Khác nhau chính', conclusion.key_differences],
+    ['Mâu thuẫn đáng chú ý', conclusion.notable_conflicts],
+    ['Cần kiểm chứng lại', conclusion.needs_verification],
+  ];
+  return (
+    <div className="ca-quick">
+      <h3>Kết luận nhanh</h3>
+      {conclusion.summary && <p>{conclusion.summary}</p>}
+      <div className="ca-quick-grid">
+        {blocks.map(([title, items]) => (
+          <div key={title}>
+            <strong>{title}</strong>
+            {items?.length ? <ul>{items.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="ca-muted">Chưa có điểm nổi bật.</p>}
+          </div>
+        ))}
+      </div>
+      {conclusion.recommended_reading_order && <p><b>Nên đọc trước:</b> {conclusion.recommended_reading_order}</p>}
+    </div>
+  );
+}
+
+function EvidenceList({ title, evidence }) {
+  return (
+    <div className="ca-evidence-card">
+      <h4>{title}</h4>
+      {evidence?.length ? evidence.map((item, index) => (
+        <div className="ca-evidence-item" key={`${item.document_id}-${item.page}-${index}`}>
+          <div className="ca-evidence-meta">{item.document_title} · Trang {item.page} · {item.section || 'Không rõ section'} · Score {typeof item.score === 'number' ? item.score.toFixed(2) : 'N/A'}</div>
+          <p>{item.snippet}</p>
+        </div>
+      )) : <p className="ca-muted">Không tìm thấy bằng chứng hợp lệ cho phía này.</p>}
+    </div>
+  );
+}
+
+function ComparisonTable({ rows, onAskRow }) {
+  const [expanded, setExpanded] = useState({});
+  if (!rows.length) return <p className="ca-muted">Bảng sẽ xuất hiện ngay dưới phần chọn tài liệu sau khi bấm “Phân tích”.</p>;
+  const toggle = (index) => setExpanded((current) => ({ ...current, [index]: !current[index] }));
+  const copyRow = (row) => navigator.clipboard?.writeText(JSON.stringify(row, null, 2));
+  return (
+    <div className="ca-table-wrap">
+      <table className="ca-table">
+        <thead><tr><th></th><th>Tiêu chí</th><th>Tài liệu A</th><th>Tài liệu B</th><th>Nhận xét so sánh</th><th>Status</th><th><span className="ca-confidence-head">Độ tin cậy <span className="ca-info" tabIndex={0} aria-label="Giải thích độ tin cậy"><Info size={14} /><span className="ca-info-tip" role="tooltip">Độ tin cậy được ước tính dựa trên mức độ liên quan của các đoạn tài liệu được truy xuất, số lượng bằng chứng hỗ trợ và việc hai tài liệu có đủ nguồn đối chiếu hay không. Đây không phải xác suất đúng tuyệt đối.</span></span></span></th></tr></thead>
+        <tbody>{rows.map((row, index) => (
+          <FragmentRow key={`${row.criterion}-${index}`} row={row} index={index} expanded={Boolean(expanded[index])} onToggle={() => toggle(index)} onAskRow={onAskRow} onCopy={copyRow} />
+        ))}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function FragmentRow({ row, index, expanded, onToggle, onAskRow, onCopy }) {
+  const warnings = row.confidence_basis?.warnings || [];
+  return (
+    <>
+      <tr>
+        <td><button className="ca-btn ca-expand-btn" type="button" onClick={onToggle} aria-label="Mở bằng chứng">{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button></td>
+        <td>{row.criterion_display}</td><td>{row.document_a}</td><td>{row.document_b}</td><td>{row.analysis}</td><td><span className="ca-status">{STATUS_LABELS[row.status] || row.status || 'Cần kiểm tra'}</span></td><td className={`ca-confidence ${typeof row.confidence === 'number' ? '' : 'unknown'}`} title={confidenceBasisText(row)}>{formatConfidence(row.confidence)}</td>
+      </tr>
+      {expanded && <tr className="ca-expanded"><td colSpan={7}>
+        <div className="ca-evidence-grid"><EvidenceList title="Evidence từ tài liệu A" evidence={row.evidence_a} /><EvidenceList title="Evidence từ tài liệu B" evidence={row.evidence_b} /></div>
+        <div className="ca-snippet"><b>Lý do confidence:</b> {confidenceBasisText(row)}{warnings.length ? <ul>{warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul> : null}</div>
+        <div className="ca-row-actions">
+          <button className="ca-btn ca-mini-btn" type="button" onClick={onToggle}>Xem bằng chứng</button>
+          <button className="ca-btn ca-mini-btn" type="button" onClick={() => onAskRow(row, 'Hỏi về dòng này')}>Hỏi về dòng này</button>
+          <button className="ca-btn ca-mini-btn" type="button" onClick={() => onAskRow(row, 'Giải thích kỹ hơn dòng này')}>Giải thích kỹ hơn</button>
+          <button className="ca-btn ca-mini-btn" type="button" onClick={() => onAskRow(row, 'Tìm bằng chứng thêm cho dòng này')}>Tìm bằng chứng thêm</button>
+          <button className="ca-btn ca-mini-btn" type="button" onClick={() => onAskRow(row, 'Viết lại dòng này thành đoạn văn học thuật')}>Viết lại học thuật</button>
+          <button className="ca-btn ca-mini-btn" type="button" onClick={() => onAskRow(row, 'Đưa dòng này vào ghi chú')}>Đưa vào ghi chú</button>
+          <button className="ca-btn ca-mini-btn" type="button" onClick={() => onCopy(row)}>Copy row</button>
+        </div>
+      </td></tr>}
+    </>
   );
 }
 
@@ -403,7 +596,13 @@ export default function CrossAnalysisPage() {
   const { token } = useAuth();
   const [documentA, setDocumentA] = useState(null);
   const [documentB, setDocumentB] = useState(null);
-  const [selectedCriteria, setSelectedCriteria] = useState(CRITERIA.map((item) => item.key));
+  const [selectedPreset, setSelectedPreset] = useState('academic');
+  const [selectedCriteria, setSelectedCriteria] = useState(PRESETS[0].criteria);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortMode, setSortMode] = useState('default');
+  const [selectedRowForChat, setSelectedRowForChat] = useState(null);
+  const [sessions, setSessions] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
   const [comparisonResult, setComparisonResult] = useState(null);
   const [quickResult, setQuickResult] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
@@ -430,10 +629,30 @@ export default function CrossAnalysisPage() {
     previewUrlsRef.current.clear();
   }, []);
 
-  const tableRows = useMemo(() => (comparisonResult?.comparison_table || []).map((row) => ({ ...row, criterion_display: mapCriterionLabel(row.criterion, row.criterion_label) })), [comparisonResult]);
+  const tableRows = useMemo(() => {
+    const base = (comparisonResult?.comparison_table || []).map((row, index) => ({ ...row, criterion_display: mapCriterionLabel(row.criterion, row.criterion_label), original_index: index }));
+    const filtered = statusFilter === 'all' ? base : base.filter((row) => row.status === statusFilter);
+    return [...filtered].sort((a, b) => {
+      if (sortMode === 'confidence_desc') return (b.confidence ?? -1) - (a.confidence ?? -1);
+      if (sortMode === 'confidence_asc') return (a.confidence ?? 999) - (b.confidence ?? 999);
+      return a.original_index - b.original_index;
+    });
+  }, [comparisonResult, statusFilter, sortMode]);
   const canAnalyze = documentA && documentB && !sameDocument(documentA, documentB);
   const sameWarning = sameDocument(documentA, documentB) ? 'Vui lòng chọn hai tài liệu khác nhau để so sánh.' : '';
   const payload = useMemo(() => ({ document_a: toDocumentRef(documentA), document_b: toDocumentRef(documentB) }), [documentA, documentB]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listCrossAnalysisSessions(token).then((data) => { if (!cancelled) setSessions(data?.sessions || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const selectPreset = (presetKey) => {
+    setSelectedPreset(presetKey);
+    const preset = PRESETS.find((item) => item.key === presetKey);
+    if (preset && preset.key !== 'custom') setSelectedCriteria(preset.criteria);
+  };
 
   const uploadForSlot = async (slot, file) => {
     setLoading(`upload-${slot}`);
@@ -464,6 +683,11 @@ export default function CrossAnalysisPage() {
     try {
       const result = await api.compareCrossAnalysisDocuments({ ...payload, criteria: selectedCriteria }, token);
       setComparisonResult(result);
+      try {
+        const saved = await api.createCrossAnalysisSession({ title: `${documentA?.title || documentA?.filename || 'A'} ↔ ${documentB?.title || documentB?.filename || 'B'}`, document_a_ref: toDocumentRef(documentA), document_b_ref: toDocumentRef(documentB), selected_preset: selectedPreset, selected_criteria: selectedCriteria, comparison_result: result, chat_history: chatMessages }, token);
+        setCurrentSessionId(saved?.id || null);
+        setSessions((current) => [saved, ...current.filter((item) => item.id !== saved?.id)].filter(Boolean).slice(0, 30));
+      } catch {}
     } catch (err) {
       setError(err.message || 'Không thể phân tích hai tài liệu.');
     } finally {
@@ -501,7 +725,7 @@ export default function CrossAnalysisPage() {
     setChatInput('');
     setLoading('chat');
     try {
-      const result = await api.chatCrossAnalysisDocuments({ ...payload, message, chat_history: nextHistory }, token);
+      const result = await api.chatCrossAnalysisDocuments({ ...payload, message, chat_history: nextHistory, selected_row: selectedRowForChat }, token);
       setChatMessages((current) => [...current, { role: 'assistant', content: result.answer || 'Không có phản hồi.' }]);
     } catch (err) {
       setChatMessages((current) => [...current, { role: 'assistant', content: err.message || 'Không thể trả lời chat.' }]);
@@ -510,13 +734,45 @@ export default function CrossAnalysisPage() {
     }
   };
 
+
+  const askAboutRow = (row, message) => {
+    setSelectedRowForChat(row);
+    setChatInput(message);
+    document.querySelector('.ca-chat-form textarea')?.focus();
+  };
+
+  const saveSession = async () => {
+    if (!comparisonResult) return;
+    setLoading('session');
+    try {
+      const body = { title: `${documentA?.title || documentA?.filename || 'A'} ↔ ${documentB?.title || documentB?.filename || 'B'}`, document_a_ref: toDocumentRef(documentA), document_b_ref: toDocumentRef(documentB), selected_preset: selectedPreset, selected_criteria: selectedCriteria, comparison_result: comparisonResult, chat_history: chatMessages };
+      const saved = currentSessionId ? await api.updateCrossAnalysisSession(currentSessionId, body, token) : await api.createCrossAnalysisSession(body, token);
+      setCurrentSessionId(saved?.id || currentSessionId);
+      setSessions((current) => [saved, ...current.filter((item) => item.id !== saved?.id)].filter(Boolean).slice(0, 30));
+    } catch (err) {
+      setError(err.message || 'Không thể lưu phiên so sánh.');
+    } finally {
+      setLoading('');
+    }
+  };
+
+  const openSession = (session) => {
+    setCurrentSessionId(session.id);
+    setDocumentA(session.document_a_ref || null);
+    setDocumentB(session.document_b_ref || null);
+    setSelectedPreset(session.selected_preset || 'custom');
+    setSelectedCriteria(session.selected_criteria || []);
+    setComparisonResult(session.comparison_result || null);
+    setChatMessages(session.chat_history || []);
+  };
+
   return (
     <div className="ca-page">
       <style>{STYLES}</style>
       <section className="ca-hero">
         <span className="ca-eyebrow"><GitCompare size={15} /> Cross-Analysis · two-document RAG</span>
-        <h1>Phân tích Tương quan</h1>
-        <p>So sánh sâu hai tài liệu, phát hiện mâu thuẫn logic, hợp nhất tri thức và xuất bảng đối chiếu ra CSV có hỗ trợ tiếng Việt.</p>
+        <h1>Đối chiếu Hai Tài liệu</h1>
+        <p>So sánh nội dung, phương pháp, kết quả và bằng chứng giữa hai tài liệu. Đây không phải phân tích correlation thống kê.</p>
       </section>
 
       <section className="ca-section">
@@ -525,10 +781,17 @@ export default function CrossAnalysisPage() {
           <DocumentSlot label="Tài liệu A" document={documentA} uploading={loading === 'upload-A'} onUpload={(file) => uploadForSlot('A', file)} onOpenLibrary={() => setActiveSlot('A')} onClear={() => setDocumentForSlot('A', null)} />
           <DocumentSlot label="Tài liệu B" document={documentB} uploading={loading === 'upload-B'} onUpload={(file) => uploadForSlot('B', file)} onOpenLibrary={() => setActiveSlot('B')} onClear={() => setDocumentForSlot('B', null)} />
         </div>
+        <div className="ca-preset-grid">
+          {PRESETS.map((preset) => (
+            <button key={preset.key} className={`ca-preset ${selectedPreset === preset.key ? 'active' : ''}`} type="button" onClick={() => selectPreset(preset.key)}>
+              <strong>{preset.label}</strong><br /><span className="ca-muted">{preset.criteria.length ? `${preset.criteria.length} tiêu chí` : 'Tick tiêu chí thủ công'}</span>
+            </button>
+          ))}
+        </div>
         <div className="ca-criteria">
           {CRITERIA.map((criterion) => (
             <label key={criterion.key} className="ca-criterion" title={criterion.hint}>
-              <input type="checkbox" checked={selectedCriteria.includes(criterion.key)} onChange={() => setSelectedCriteria((current) => current.includes(criterion.key) ? current.filter((key) => key !== criterion.key) : [...current, criterion.key])} />
+              <input type="checkbox" checked={selectedCriteria.includes(criterion.key)} onChange={() => { setSelectedPreset('custom'); setSelectedCriteria((current) => current.includes(criterion.key) ? current.filter((key) => key !== criterion.key) : [...current, criterion.key]); }} />
               <span><strong>{criterion.label}</strong><span>{criterion.hint}</span></span>
             </label>
           ))}
@@ -543,19 +806,24 @@ export default function CrossAnalysisPage() {
 
       <section className="ca-section">
         <div className="ca-toolbar">
-          <h2 className="ca-section-title"><CheckCircle2 size={20} /> 2. Bảng đối chiếu trực quan</h2>
-          <button className="ca-btn" type="button" disabled={!tableRows.length} onClick={() => downloadCsv(tableRows)}><Download size={16} /> Xuất CSV</button>
+          <h2 className="ca-section-title"><CheckCircle2 size={20} /> 2. Bảng đối chiếu có bằng chứng</h2>
+          <div className="ca-actions" style={{ marginTop: 0 }}>
+            <button className="ca-btn" type="button" disabled={!comparisonResult} onClick={saveSession}><Save size={16} /> Lưu phiên</button>
+            <button className="ca-btn" type="button" disabled={!tableRows.length} onClick={() => downloadCsv(tableRows)}><Download size={16} /> Xuất CSV</button>
+            <button className="ca-btn" type="button" disabled={!comparisonResult} onClick={() => downloadMarkdown(comparisonResult, comparisonResult?.comparison_table || [])}><Download size={16} /> Xuất Markdown</button>
+            <button className="ca-btn" type="button" disabled title="Xuất DOCX sẽ được bổ sung sau."><Download size={16} /> DOCX</button>
+          </div>
         </div>
         {comparisonResult?.summary && <p className="ca-muted">{comparisonResult.summary}</p>}
-        {tableRows.length ? (
-          <div className="ca-table-wrap">
-            <table className="ca-table">
-              <thead><tr><th>Tiêu chí</th><th>Tài liệu A</th><th>Tài liệu B</th><th>Nhận xét so sánh</th><th><span className="ca-confidence-head">Độ tin cậy <span className="ca-info" tabIndex={0} aria-label="Giải thích độ tin cậy"><Info size={14} /><span className="ca-info-tip" role="tooltip">Độ tin cậy được ước tính dựa trên mức độ liên quan của các đoạn tài liệu được truy xuất bằng vector search, số lượng trích dẫn hỗ trợ và mức độ nhất quán giữa câu trả lời AI với nguồn. Đây không phải là xác suất đúng tuyệt đối.</span></span></span></th></tr></thead>
-              <tbody>{tableRows.map((row, index) => <tr key={`${row.criterion}-${index}`}><td>{row.criterion_display}</td><td>{row.document_a}</td><td>{row.document_b}</td><td>{row.analysis}</td><td className={`ca-confidence ${typeof row.confidence === 'number' ? '' : 'unknown'}`} title={confidenceTitle(row)}>{formatConfidence(row.confidence)}</td></tr>)}</tbody>
-            </table>
-          </div>
-        ) : <p className="ca-muted">Bảng sẽ xuất hiện ngay dưới phần chọn tài liệu sau khi bấm “Phân tích”.</p>}
+        {comparisonResult?.preflight?.warnings?.length ? <div className="ca-warning"><AlertTriangle size={17} /><div><b>Lưu ý trước khi đọc kết quả</b><ul>{comparisonResult.preflight.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div></div> : null}
+        <QuickConclusionCard conclusion={comparisonResult?.quick_conclusion} />
+        <div className="ca-filters">
+          <label className="ca-muted">Trạng thái <select className="ca-select" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">Tất cả</option><option value="similar">Giống nhau</option><option value="different">Khác nhau</option><option value="conflict">Mâu thuẫn</option><option value="missing_information">Thiếu thông tin</option><option value="needs_review">Cần đọc lại nguồn</option></select></label>
+          <label className="ca-muted">Sắp xếp <select className="ca-select" value={sortMode} onChange={(event) => setSortMode(event.target.value)}><option value="default">Theo tiêu chí mặc định</option><option value="confidence_desc">Confidence cao đến thấp</option><option value="confidence_asc">Confidence thấp đến cao</option></select></label>
+        </div>
+        <ComparisonTable rows={tableRows} onAskRow={askAboutRow} />
         <QuickResultPanel quickResult={quickResult} />
+        <div className="ca-sessions"><strong>Phiên so sánh gần đây</strong><div className="ca-session-list">{sessions.slice(0, 5).map((session) => <button key={session.id} className="ca-session" type="button" onClick={() => openSession(session)}>{session.title || 'Phiên đối chiếu'}<br /><span className="ca-muted">{session.updated_at || session.created_at}</span></button>)}</div></div>
       </section>
 
       <section className="ca-section">
@@ -571,6 +839,7 @@ export default function CrossAnalysisPage() {
           <h2 className="ca-section-title" style={{ marginBottom: 0 }}><MessageSquare size={20} /> 4. Chat AI theo đúng hai tài liệu</h2>
           <button className="ca-btn danger" type="button" disabled={!chatMessages.length} onClick={clearChatHistory}><Trash2 size={16} /> Xoá lịch sử</button>
         </div>
+        {selectedRowForChat && <div className="ca-chat-context"><span>Chat đang hỏi theo dòng: {mapCriterionLabel(selectedRowForChat.criterion, selectedRowForChat.criterion_label)}</span><button className="ca-btn ca-mini-btn" type="button" onClick={() => setSelectedRowForChat(null)}>Bỏ context row</button></div>}
         <div className="ca-chat-log">
           {chatMessages.length === 0 ? <p className="ca-muted">Hỏi AI về điểm giống/khác nhau, lý do mâu thuẫn, hoặc cách kết hợp hai tài liệu.</p> : chatMessages.map((msg, index) => <div key={index} className={`ca-message ${msg.role}`}>{msg.content}</div>)}
         </div>
