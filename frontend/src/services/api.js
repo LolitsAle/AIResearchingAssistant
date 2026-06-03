@@ -311,6 +311,15 @@ export const api = {
     );
   },
 
+  linkSystemDocumentToNotebook: (notebookId, systemDocumentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(
+        `/api/notebooks/${notebookId}/system-documents`,
+        { system_document_id: systemDocumentId },
+        { headers: authHeader(token) }
+      )
+    ),
+
   deleteDocument: (docId, token) =>
     unwrapRequest(() =>
       axiosInstance.delete(`/api/documents/${docId}`, { headers: authHeader(token) })
