@@ -108,6 +108,8 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
     source_type = str(row.get("source_type") or "SYSTEM_UPLOAD").upper()
     has_pdf = bool(_first_present(row, ["has_pdf"], False) or str(row.get("file_type") or "").upper() == "PDF" or str(row.get("mime_type") or "").lower() == "application/pdf")
     can_download = bool(row.get("storage_path") or (row.get("download_url") and row.get("access_type") in {"OPEN_ACCESS", "FREE_TO_READ", "open_access", "free_to_read"}))
+    vote_avg = float(row.get("vote_avg") or row.get("average_rating") or 0)
+    vote_count = int(row.get("vote_count") or row.get("rating_count") or 0)
 
     return {
         "id": str(row.get("id")),
@@ -142,8 +144,11 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
         "has_code": bool(row.get("has_code", False)),
         "has_data": bool(row.get("has_data", False)),
         "citation_count": int(row.get("citation_count") or 0),
-        "vote_avg": float(row.get("vote_avg") or 0),
-        "vote_count": int(row.get("vote_count") or 0),
+        "vote_avg": vote_avg,
+        "vote_count": vote_count,
+        "average_rating": vote_avg,
+        "rating_count": vote_count,
+        "my_rating": row.get("my_rating"),
         "download_count": int(row.get("download_count") or 0),
         "doi": row.get("doi"),
         "external_url": row.get("external_url") or row.get("url"),
@@ -276,26 +281,84 @@ def list_top_library_tags(limit: int = 24) -> dict:
     return {"tags": tags}
 
 
-def vote_document(document_id: str, user: dict, rating: int) -> dict:
+def _validate_rating_document_type(document_type: str | None) -> str:
+    normalized = str(document_type or "system_library").strip().lower()
+    if normalized not in {"system_library", "community_library"}:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_DOCUMENT_TYPE", "message": "Loại tài liệu không hợp lệ."})
+    return normalized
+
+
+def _rating_aggregate(document_id: str, user_id: str | None = None) -> dict:
+    try:
+        votes_resp = supabase.table("system_document_votes").select("user_id, rating").eq("document_id", document_id).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc):
+            return {"document_id": document_id, "average_rating": 0, "rating_count": 0, "my_rating": None, "vote_avg": 0, "vote_count": 0}
+        logger.exception("Get document rating failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải đánh giá tài liệu."}) from exc
+    votes, vote_error = _supabase_response_data(votes_resp)
+    if vote_error:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải đánh giá tài liệu."})
+    ratings = [int(v.get("rating") or 0) for v in votes or [] if int(v.get("rating") or 0) > 0]
+    rating_count = len(ratings)
+    average_rating = round(sum(ratings) / rating_count, 2) if rating_count else 0
+    my_rating = None
+    if user_id:
+        for vote in votes or []:
+            if str(vote.get("user_id")) == str(user_id):
+                my_rating = int(vote.get("rating") or 0) or None
+                break
+    return {
+        "document_id": document_id,
+        "average_rating": average_rating,
+        "rating_count": rating_count,
+        "my_rating": my_rating,
+        "vote_avg": average_rating,
+        "vote_count": rating_count,
+    }
+
+
+def _persist_document_rating_summary(document_id: str, aggregate: dict) -> None:
+    try:
+        supabase.table("system_documents").update({"vote_avg": aggregate["average_rating"], "vote_count": aggregate["rating_count"]}).eq("id", document_id).execute()
+    except Exception:
+        logger.warning("Could not sync rating aggregate to system_documents for %s", document_id, exc_info=True)
+
+
+def get_document_rating(document_id: str, user: dict, document_type: str | None = "system_library") -> dict:
+    _validate_rating_document_type(document_type)
     user_id = _get_user_id(user)
-    rating = max(1, min(5, int(rating)))
+    docs = get_documents_by_ids([document_id])
+    if not docs:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu."})
+    return _rating_aggregate(document_id, user_id)
+
+
+def rate_document(document_id: str, user: dict, rating: int, document_type: str | None = "system_library") -> dict:
+    _validate_rating_document_type(document_type)
+    user_id = _get_user_id(user)
+    if int(rating) < 1 or int(rating) > 5:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_RATING", "message": "Đánh giá phải từ 1 đến 5 sao."})
     docs = get_documents_by_ids([document_id])
     if not docs:
         raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu."})
     try:
-        supabase.table("system_document_votes").upsert({"user_id": user_id, "document_id": document_id, "rating": rating}, on_conflict="user_id,document_id").execute()
-        votes_resp = supabase.table("system_document_votes").select("rating").eq("document_id", document_id).execute()
-        votes, vote_error = _supabase_response_data(votes_resp)
-        if vote_error:
-            raise RuntimeError(vote_error)
-        ratings = [int(v.get("rating") or 0) for v in votes or []]
-        vote_count = len(ratings)
-        vote_avg = round(sum(ratings) / vote_count, 2) if vote_count else 0
-        supabase.table("system_documents").update({"vote_avg": vote_avg, "vote_count": vote_count}).eq("id", document_id).execute()
+        supabase.table("system_document_votes").upsert(
+            {"user_id": user_id, "document_id": document_id, "rating": int(rating)},
+            on_conflict="user_id,document_id",
+        ).execute()
     except Exception as exc:
-        logger.exception("Vote document failed")
+        logger.exception("Rate document failed")
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể cập nhật đánh giá tài liệu."}) from exc
-    return {"document_id": document_id, "rating": rating, "vote_avg": vote_avg, "vote_count": vote_count}
+    aggregate = _rating_aggregate(document_id, user_id)
+    _persist_document_rating_summary(document_id, aggregate)
+    return aggregate
+
+
+def vote_document(document_id: str, user: dict, rating: int) -> dict:
+    # Backward-compatible alias for older clients; new UI uses /rating.
+    aggregate = rate_document(document_id, user, rating, "system_library")
+    return {"document_id": document_id, "rating": aggregate["my_rating"], "vote_avg": aggregate["average_rating"], "vote_count": aggregate["rating_count"]}
 
 
 def _format_system_file_type(file_type: str) -> str:
@@ -494,6 +557,7 @@ async def import_system_document_from_upload(
     filename: str,
     created_by: str | None = None,
     title: str | None = None,
+    description: str | None = None,
     category: str | None = None,
     tags: str | list[str] | None = None,
     mime_type: str | None = None,
@@ -533,6 +597,7 @@ async def import_system_document_from_upload(
         "file_type": _format_system_file_type(parsed_file_type),
         "category": metadata["category"],
         "tags": metadata["tags"],
+        "description": (description or "").strip() or None,
         "summary": metadata["summary"],
         "page_count": len(pages),
         "word_count": _estimate_word_count(pages),
@@ -559,8 +624,9 @@ async def import_system_document_from_upload(
     try:
         resp = supabase.table("system_documents").insert(document_payload).execute()
     except Exception:
-        # Backward-compatible fallback until the migration adding citation_threshold is applied.
+        # Backward-compatible fallback until optional metadata columns are applied.
         document_payload.pop("citation_threshold", None)
+        document_payload.pop("description", None)
         try:
             resp = supabase.table("system_documents").insert(document_payload).execute()
         except Exception as exc:
@@ -866,6 +932,7 @@ async def import_community_document_from_upload(
     filename: str,
     user: dict,
     title: str | None = None,
+    description: str | None = None,
     category: str | None = None,
     tags: str | list[str] | None = None,
     mime_type: str | None = None,
@@ -881,6 +948,7 @@ async def import_community_document_from_upload(
         filename=filename,
         created_by=user_id,
         title=title,
+        description=description,
         category=category,
         tags=tags,
         mime_type=mime_type,

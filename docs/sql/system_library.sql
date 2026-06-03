@@ -42,6 +42,7 @@ alter table public.system_documents
   add column if not exists file_size bigint,
   add column if not exists mime_type text,
   add column if not exists category text,
+  add column if not exists description text,
   add column if not exists summary text,
   add column if not exists created_by uuid;
 

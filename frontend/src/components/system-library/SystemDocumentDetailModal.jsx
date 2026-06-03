@@ -1,4 +1,5 @@
-import { Download, FileText, Star, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Download, FileText, Loader2, Star, X } from 'lucide-react';
 
 const formatDate = (value) => {
   if (!value) return 'Chưa có thông tin';
@@ -15,20 +16,75 @@ const formatFileSize = (bytes) => {
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 };
 
-function RatingStars({ rating, count }) {
-  const numeric = Number(rating);
-  const hasRating = Number.isFinite(numeric) && numeric > 0;
-  const litStars = hasRating ? Math.max(0, Math.min(5, Math.round(numeric))) : 0;
+const formatRating = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '0/5';
+  return `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}/5`;
+};
+
+function StarRating({ averageRating, myRating, onRate, isSubmitting }) {
+  const [hovered, setHovered] = useState(0);
+  const numericAverage = Number(averageRating);
+  const litStars = hovered || (Number.isFinite(numericAverage) && numericAverage > 0 ? Math.max(0, Math.min(5, Math.round(numericAverage))) : 0);
+
   return (
-    <div className="sl-rating" aria-label={hasRating ? `Đánh giá ${numeric.toFixed(1)} trên 5` : 'Chưa có đánh giá'}>
-      <div className="sl-rating__stars">
-        {[1, 2, 3, 4, 5].map((star) => (
-          <Star key={star} size={20} fill={star <= litStars ? 'currentColor' : 'none'} className={star <= litStars ? 'is-lit' : 'is-dim'} />
-        ))}
-      </div>
-      <strong>{hasRating ? `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}/5` : 'Chưa có đánh giá'}</strong>
-      {hasRating && <span className="sl-modal__muted">({Number(count) || 0} lượt đánh giá)</span>}
+    <div className="sl-rating__stars" onMouseLeave={() => setHovered(0)}>
+      {[1, 2, 3, 4, 5].map((star) => {
+        const active = star <= litStars;
+        const selected = Number(myRating) === star;
+        return (
+          <button
+            key={star}
+            type="button"
+            className={`sl-rating__star ${active ? 'is-lit' : 'is-dim'} ${selected ? 'is-selected' : ''}`}
+            onMouseEnter={() => setHovered(star)}
+            onFocus={() => setHovered(star)}
+            onBlur={() => setHovered(0)}
+            onClick={() => onRate(star)}
+            disabled={isSubmitting}
+            aria-label={`Đánh giá ${star} sao`}
+            title={`Đánh giá ${star}/5`}
+          >
+            <Star size={24} fill="currentColor" />
+          </button>
+        );
+      })}
     </div>
+  );
+}
+
+function DocumentRatingSection({ rating, onRate, loading, submitting, error }) {
+  const averageRating = rating?.average_rating ?? rating?.vote_avg ?? 0;
+  const ratingCount = Number(rating?.rating_count ?? rating?.vote_count ?? 0);
+  const myRating = rating?.my_rating ?? null;
+
+  return (
+    <section className={`sl-modal__section sl-rating-section ${submitting ? 'is-loading' : ''}`}>
+      <div className="sl-rating-section__header">
+        <div>
+          <h3>Đánh giá tài liệu</h3>
+          <p>Chọn trực tiếp số sao bạn muốn đánh giá cho tài liệu này.</p>
+        </div>
+        {(loading || submitting) && <span className="sl-rating__loading"><Loader2 size={16} /> {submitting ? 'Đang lưu...' : 'Đang tải...'}</span>}
+      </div>
+      <div className="sl-rating">
+        <StarRating averageRating={averageRating} myRating={myRating} onRate={onRate} isSubmitting={submitting || loading} />
+        <div className="sl-rating__summary">
+          {ratingCount > 0 ? (
+            <>
+              <strong>Điểm trung bình: {formatRating(averageRating)}</strong>
+              <span>{ratingCount} lượt đánh giá</span>
+            </>
+          ) : (
+            <strong>Chưa có đánh giá</strong>
+          )}
+          <span className={myRating ? 'sl-rating__mine is-rated' : 'sl-rating__mine'}>
+            {myRating ? `Bạn đã đánh giá: ${myRating}/5` : 'Bạn chưa đánh giá tài liệu này'}
+          </span>
+        </div>
+      </div>
+      {error && <p className="sl-rating__error">{error}</p>}
+    </section>
   );
 }
 
@@ -37,10 +93,17 @@ function DetailRow({ label, value }) {
   return <div className="sl-modal__row"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-export default function SystemDocumentDetailModal({ document, onClose, onDownload, downloading }) {
+export default function SystemDocumentDetailModal({ document, onClose, onDownload, downloading, rating, ratingLoading, ratingSubmitting, ratingError, onRate }) {
+  const [localDocument, setLocalDocument] = useState(document);
+
+  useEffect(() => {
+    setLocalDocument(document);
+  }, [document]);
+
   if (!document) return null;
-  const title = document.title || document.filename || 'Tài liệu';
-  const summary = document.description || document.summary || document.ai_summary || 'Chưa có thông tin';
+  const current = localDocument || document;
+  const title = current.title || current.filename || 'Tài liệu';
+  const summary = current.description || current.summary || current.ai_summary || 'Chưa có thông tin';
 
   return (
     <div className="sl-modal-overlay" role="presentation" onClick={onClose}>
@@ -58,43 +121,46 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
             <h3>Mô tả / tóm tắt</h3>
             <p>{summary}</p>
           </section>
-          <section className="sl-modal__section">
-            <h3>Đánh giá</h3>
-            <RatingStars rating={document.vote_avg ?? document.rating} count={document.vote_count ?? document.rating_count} />
-          </section>
+          <DocumentRatingSection
+            rating={rating || current}
+            loading={ratingLoading}
+            submitting={ratingSubmitting}
+            error={ratingError}
+            onRate={onRate}
+          />
           <section className="sl-modal__section">
             <h3>Metadata</h3>
             <div className="sl-modal__grid">
-              <DetailRow label="Tên file" value={document.filename || 'Chưa có thông tin'} />
-              <DetailRow label="Định dạng" value={document.file_type || document.mime_type || 'Chưa có thông tin'} />
-              <DetailRow label="Ngày đăng" value={formatDate(document.created_at)} />
-              <DetailRow label="Ngày cập nhật" value={formatDate(document.updated_at)} />
-              <DetailRow label="Thể loại" value={document.category || document.subject_area || 'Chưa có thông tin'} />
-              <DetailRow label="Số trang" value={document.page_count ?? 'Chưa có thông tin'} />
-              <DetailRow label="Số từ" value={document.word_count ?? 'Chưa có thông tin'} />
-              <DetailRow label="Kích thước" value={formatFileSize(document.file_size)} />
-              <DetailRow label="MIME type" value={document.mime_type || 'Chưa có thông tin'} />
-              <DetailRow label="Người đăng" value={document.uploader_name || 'Hệ thống'} />
-              <DetailRow label="Source type" value={document.source_type || 'SYSTEM_UPLOAD'} />
-              <DetailRow label="Status" value={document.status || 'PUBLISHED'} />
-              <DetailRow label="Peer-review" value={document.peer_review_status || 'UNKNOWN'} />
-              <DetailRow label="Access Type" value={document.access_type || 'UNKNOWN'} />
-              <DetailRow label="Review Type" value={document.review_type || 'UNKNOWN'} />
-              <DetailRow label="Has PDF / Code / Data" value={`${document.has_pdf ? 'PDF' : 'No PDF'} · ${document.has_code ? 'Code' : 'No Code'} · ${document.has_data ? 'Data' : 'No Data'}`} />
-              <DetailRow label="Trích dẫn / lượt tải" value={`${document.citation_count || 0} trích dẫn · ${document.download_count || 0} lượt tải`} />
-              <DetailRow label="DOI" value={document.doi || 'Chưa có thông tin'} />
-              <DetailRow label="URL" value={document.external_url || document.download_url || 'Chưa có thông tin'} />
+              <DetailRow label="Tên file" value={current.filename || 'Chưa có thông tin'} />
+              <DetailRow label="Định dạng" value={current.file_type || current.mime_type || 'Chưa có thông tin'} />
+              <DetailRow label="Ngày đăng" value={formatDate(current.created_at)} />
+              <DetailRow label="Ngày cập nhật" value={formatDate(current.updated_at)} />
+              <DetailRow label="Thể loại" value={current.category || current.subject_area || 'Chưa có thông tin'} />
+              <DetailRow label="Số trang" value={current.page_count ?? 'Chưa có thông tin'} />
+              <DetailRow label="Số từ" value={current.word_count ?? 'Chưa có thông tin'} />
+              <DetailRow label="Kích thước" value={formatFileSize(current.file_size)} />
+              <DetailRow label="MIME type" value={current.mime_type || 'Chưa có thông tin'} />
+              <DetailRow label="Người đăng" value={current.uploader_name || 'Hệ thống'} />
+              <DetailRow label="Source type" value={current.source_type || 'SYSTEM_UPLOAD'} />
+              <DetailRow label="Status" value={current.status || 'PUBLISHED'} />
+              <DetailRow label="Peer-review" value={current.peer_review_status || 'UNKNOWN'} />
+              <DetailRow label="Access Type" value={current.access_type || 'UNKNOWN'} />
+              <DetailRow label="Review Type" value={current.review_type || 'UNKNOWN'} />
+              <DetailRow label="Has PDF / Code / Data" value={`${current.has_pdf ? 'PDF' : 'No PDF'} · ${current.has_code ? 'Code' : 'No Code'} · ${current.has_data ? 'Data' : 'No Data'}`} />
+              <DetailRow label="Trích dẫn / lượt tải" value={`${current.citation_count || 0} trích dẫn · ${current.download_count || 0} lượt tải`} />
+              <DetailRow label="DOI" value={current.doi || 'Chưa có thông tin'} />
+              <DetailRow label="URL" value={current.external_url || current.download_url || 'Chưa có thông tin'} />
             </div>
           </section>
           <section className="sl-modal__section">
             <h3>Tag</h3>
             <div className="sl-card__tags">
-              {(document.tags || []).length ? document.tags.map((tag) => <span key={tag} className="sl-tag">#{tag}</span>) : <span className="sl-modal__muted">Chưa có thông tin</span>}
+              {(current.tags || []).length ? current.tags.map((tag) => <span key={tag} className="sl-tag">#{tag}</span>) : <span className="sl-modal__muted">Chưa có thông tin</span>}
             </div>
           </section>
         </div>
         <footer className="sl-modal__footer">
-          <button type="button" className="sl-download-btn" onClick={() => onDownload(document)} disabled={downloading || !document.can_download}>
+          <button type="button" className="sl-download-btn" onClick={() => onDownload(current)} disabled={downloading || !current.can_download}>
             <Download size={16} /> {downloading ? 'Đang tải tài liệu...' : 'Download'}
           </button>
         </footer>
