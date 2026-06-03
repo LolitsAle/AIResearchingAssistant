@@ -1,11 +1,9 @@
-import { Bookmark, Download, FileText } from 'lucide-react';
+import { Bookmark, Database, Download, FileCode, FileText, Star } from 'lucide-react';
 
-const formatDate = (value) => {
-  if (!value) return 'Chưa cập nhật';
-  try { return new Date(value).toLocaleDateString('vi-VN'); } catch { return 'Chưa cập nhật'; }
-};
+const formatNumber = (value) => new Intl.NumberFormat('vi-VN', { notation: Number(value) >= 1000 ? 'compact' : 'standard' }).format(Number(value) || 0);
+const label = (value) => String(value || 'UNKNOWN').replaceAll('_', ' ');
 
-export default function SystemDocumentCard({ document, onToggleBookmark, onToggleTag, onOpenDetails, onDownload, downloading }) {
+export default function SystemDocumentCard({ document, onToggleBookmark, onToggleTag, onOpenDetails, onDownload, onVote, downloading }) {
   const title = document.title || document.filename || 'Tài liệu chưa có tiêu đề';
   const summary = document.summary || document.ai_summary || document.description || 'Chưa có summary.';
 
@@ -19,21 +17,35 @@ export default function SystemDocumentCard({ document, onToggleBookmark, onToggl
       </div>
       <div className="sl-card__body">
         <div className="sl-card__badges">
-          {document.is_new && <span className="sl-badge sl-badge--new">Mới</span>}
-          <span className="sl-badge sl-badge--file">{document.file_type || 'FILE'}</span>
+          <span className="sl-badge sl-badge--file">{document.source_type || 'SYSTEM_UPLOAD'}</span>
+          <span className="sl-badge">{label(document.peer_review_status)}</span>
+          <span className="sl-badge">{label(document.access_type)}</span>
         </div>
         <h3>{title}</h3>
         <p>{summary}</p>
-        <div className="sl-card__meta"><span>{document.category || document.subject_area || 'Khác'}</span><span>•</span><span>{formatDate(document.updated_at || document.created_at)}</span></div>
+        <div className="sl-card__meta"><span>Người đăng: <strong>{document.uploader_name || 'Hệ thống'}</strong></span></div>
+        <div className="sl-card__flags">
+          <span className={document.has_pdf ? 'is-on' : ''}><FileText size={13} /> PDF</span>
+          <span className={document.has_code ? 'is-on' : ''}><FileCode size={13} /> Code</span>
+          <span className={document.has_data ? 'is-on' : ''}><Database size={13} /> Data</span>
+        </div>
+        <div className="sl-card__metrics">
+          <span>{formatNumber(document.citation_count)} citations</span>
+          <span><Star size={13} fill="currentColor" /> {(Number(document.vote_avg) || 0).toFixed(1)} ({formatNumber(document.vote_count)})</span>
+          <span>{formatNumber(document.download_count)} downloads</span>
+        </div>
         <div className="sl-card__tags">
           {(document.tags || []).slice(0, 3).map((tag) => <button key={tag} type="button" className="sl-tag" onClick={() => onToggleTag(tag)}>#{tag}</button>)}
           {(document.tags || []).length > 3 && <span className="sl-more-tags">+{document.tags.length - 3}</span>}
         </div>
       </div>
       <div className="sl-card__footer">
-        <button type="button" className="sl-download-btn" onClick={() => onDownload(document)} disabled={downloading || !document.can_download} title={document.can_download ? 'Tải file gốc' : 'Chưa có file để tải'}>
+        <button type="button" className="sl-download-btn" onClick={() => onDownload(document)} disabled={downloading || !document.can_download} title={document.can_download ? 'Tải PDF/file hợp lệ' : 'Chỉ download khi có Open Access PDF hoặc file upload hợp lệ'}>
           <Download size={16} /> {downloading ? 'Đang tải...' : 'Download'}
         </button>
+        <div className="sl-card__actions">
+          {[1, 2, 3, 4, 5].map((rating) => <button key={rating} type="button" className="sl-star-btn" onClick={() => onVote(document, rating)} aria-label={`Vote ${rating} sao`}><Star size={14} /></button>)}
+        </div>
         <button type="button" className="sl-more-link" onClick={() => onOpenDetails(document)}>Xem thêm</button>
       </div>
     </article>

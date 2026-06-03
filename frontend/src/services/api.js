@@ -429,6 +429,43 @@ export const api = {
       axiosInstance.get("/api/system-library/bookmarks", { headers: authHeader(token) })
     ),
 
+  getSystemLibraryTags: (token) =>
+    unwrapRequest(() => axiosInstance.get("/api/system-library/tags", { headers: authHeader(token) })),
+
+  uploadCommunityLibraryDocument: (payload, token, onProgress) => {
+    const formData = new FormData();
+    formData.append("file", payload.file);
+    formData.append("title", payload.title || "");
+    formData.append("category", payload.category || "");
+    formData.append("tags", payload.tags || "");
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/system-library/documents/upload", formData, {
+        headers: { ...authHeader(token) },
+        onUploadProgress: (event) => {
+          if (onProgress && event.total) onProgress(Math.round((event.loaded * 100) / event.total));
+        },
+      })
+    );
+  },
+
+  voteSystemDocument: (documentId, rating, token) =>
+    unwrapRequest(() => axiosInstance.post(`/api/system-library/documents/${documentId}/vote`, { rating }, { headers: authHeader(token) })),
+
+  searchInternetPapers: (payload, token) =>
+    unwrapRequest(() => axiosInstance.post("/api/system-library/papers/search", payload, { headers: authHeader(token) })),
+
+  importInternetPaperToLibrary: (paper, token) =>
+    unwrapRequest(() => axiosInstance.post("/api/system-library/papers/import", { paper }, { headers: authHeader(token) })),
+
+  updateUserLibraryUploadPermission: (userId, payload, token) =>
+    unwrapRequest(() => axiosInstance.patch(`/api/admin/users/${userId}/library-upload`, payload, { headers: authHeader(token) })),
+
+  updateUserPublishPermission: (userId, payload, token) =>
+    unwrapRequest(() => axiosInstance.patch(`/api/admin/users/${userId}/publish-permission`, payload, { headers: authHeader(token) })),
+
+  updateLibraryDocumentStatus: (documentId, payload, token) =>
+    unwrapRequest(() => axiosInstance.patch(`/api/admin/library/documents/${documentId}/status`, payload, { headers: authHeader(token) })),
+
   bookmarkSystemDocument: (documentId, token) =>
     unwrapRequest(() =>
       axiosInstance.post(`/api/system-library/documents/${documentId}/bookmark`, {}, { headers: authHeader(token) })

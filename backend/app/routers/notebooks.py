@@ -521,7 +521,7 @@ async def link_system_document_to_notebook(
 
     try:
         doc_resp = supabase.table("system_documents").select(
-            "id, title, filename, file_type, page_count, is_vector_ready"
+            "id, title, filename, file_type, page_count, is_vector_ready, status"
         ).eq("id", body.system_document_id).limit(1).execute()
     except Exception as exc:
         logger.exception("Load system document failed")
@@ -533,8 +533,10 @@ async def link_system_document_to_notebook(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu hệ thống"})
 
     system_doc = doc_rows[0]
+    if str(system_doc.get("status") or "PUBLISHED").upper() != "PUBLISHED":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "DOC_NOT_FOUND", "message": "Tài liệu không còn được công khai"})
     if not system_doc.get("is_vector_ready"):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "VECTOR_NOT_READY", "message": "Tài liệu hệ thống chưa sẵn sàng cho RAG"})
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "VECTOR_NOT_READY", "message": "Tài liệu thư viện chưa sẵn sàng cho RAG"})
 
     linked_filename = f"[Hệ thống] {system_doc.get('title') or system_doc.get('filename')}"
     try:
