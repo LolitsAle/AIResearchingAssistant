@@ -9,6 +9,7 @@ from app.dependencies import get_current_user
 from app.services.cross_analysis_service import get_document_preview, resolve_document, upload_temp_document
 from app.services.llm import GROQ_MODEL, client
 from app.services.vision_service import analyze_academic_image, is_vision_configured
+from app.services.activity_log_service import log_user_activity
 
 router = APIRouter(tags=["academic-lens"])
 
@@ -69,9 +70,23 @@ def _context_from_document(document: dict[str, Any]) -> str:
 
 @router.post("/documents/upload", response_model=dict)
 async def upload_academic_lens_document(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    _ = user
     contents = await file.read()
-    document = await upload_temp_document(contents, file.filename or "academic-document")
+    filename = file.filename or "academic-document"
+    document = await upload_temp_document(contents, filename)
+    log_user_activity(
+        user_id=_user_id(user),
+        feature_name="academic_lens",
+        action_type="document_upload",
+        document_id=document.get("id"),
+        document_name=document.get("filename") or filename,
+        metadata={
+            "file_type": document.get("file_type"),
+            "size": len(contents),
+            "source": "academic_lens_upload",
+            "upload_status": "ready",
+            "temp_document_id": document.get("id"),
+        },
+    )
     preview = get_document_preview(document["id"])
     return {"success": True, "data": {**document, **preview}}
 
