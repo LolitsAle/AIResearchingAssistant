@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, FileUp, Library, Search, Sparkles, Upload, X } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  FileUp,
+  Library,
+  Search,
+  Sparkles,
+  Upload,
+  X,
+} from "lucide-react";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import SystemLibrarySearchBar from "../components/system-library/SystemLibrarySearchBar";
@@ -39,7 +48,8 @@ const STYLES = `
   .sl-search__icon { margin-left: 8px; color: #c4a464; }
   .sl-search input, .sl-paper-search input, .sl-upload-form input, .sl-upload-form textarea, .sl-upload-form select, .sl-toolbar select, .sl-citation-filter input { width: 100%; min-width: 0; border: 1px solid rgba(255,255,255,0.09); outline: none; background: rgba(0,0,0,.2); color: #eee6d8; font-size: 14px; border-radius: 12px; padding: 11px 12px; }
   .sl-search input { border: 0; background: transparent; padding: 0; }
-  .sl-search__button, .sl-toolbar-btn, .sl-download-btn, .sl-upload-btn { border: 0; border-radius: 14px; padding: 11px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: linear-gradient(135deg, #d4b66f, #8a6a30); color: #18130d; font-weight: 800; cursor: pointer; text-decoration: none; }
+  .sl-search__button, .sl-download-btn, .sl-upload-btn { border: 0; border-radius: 14px; padding: 11px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: linear-gradient(135deg, #d4b66f, #8a6a30); color: #18130d; font-weight: 800; cursor: pointer; text-decoration: none; }
+  .sl-toolbar-btn { border: 0; border-radius: 14px; padding: 11px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: linear-gradient(135deg, #d4b66f, #8a6a30); color: #18130d; font-weight: 800; cursor: pointer; text-decoration: none; white-space: nowrap; flex-shrink: 0;}
   .sl-search__button:disabled, .sl-toolbar-btn:disabled, .sl-download-btn:disabled, .sl-upload-btn:disabled { opacity: .42; cursor: not-allowed; }
   .sl-body { display: grid; grid-template-columns: minmax(220px, 290px) 1fr; gap: 20px; margin-top: 22px; align-items: start; }
   .sl-filters, .sl-toolbar, .sl-card, .sl-empty, .sl-error { border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.035); border-radius: 22px; box-shadow: 0 18px 60px rgba(0,0,0,0.24); }
@@ -59,7 +69,7 @@ const STYLES = `
   .sl-link-button, .sl-more-link { border: 0; background: transparent; color: #d4b66f; cursor: pointer; }
   .sl-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 18px; color: #bfb4a3; margin-bottom: 16px; flex-wrap: wrap; }
   .sl-toolbar strong { color: #f2d48b; font-size: 22px; }
-  .sl-toolbar__actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .sl-toolbar__actions { display: flex; gap: 10px; align-items: center; flex-wrap: nowrap; }
   .sl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
   .sl-card { position: relative; padding: 16px; color: #efe6d8; min-height: 265px; display: flex; flex-direction: column; gap: 14px; transition: border-color .18s, box-shadow .18s; }
   .sl-card:hover { border-color: rgba(212,182,111,.28); box-shadow: 0 24px 75px rgba(0,0,0,.34); }
@@ -113,7 +123,7 @@ const STYLES = `
   .sl-modal__footer { padding: 16px 26px 24px; display: flex; justify-content: flex-end; border-top: 1px solid rgba(255,255,255,.08); }
 
   .sl-upload-panel h2 { display:flex; align-items:center; gap:10px; margin:0; color:#f3ebdc; font-size: clamp(22px, 3vw, 30px); }
-  .sl-upload-layout { display:grid; grid-template-columns: minmax(0, 1.25fr) minmax(260px, .75fr); gap:18px; margin-top:20px; align-items:start; }
+  .sl-upload-layout { display:grid; grid-template-columns: minmax(0, 1.25fr) minmax(260px, .75fr); gap:18px; margin-top:20px; align-items:center; }
   .sl-upload-form { display:grid; gap:14px; margin:0; }
   .sl-upload-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; }
   .sl-upload-field { display:grid; gap:7px; color:#cfc5b5; font-size:13px; }
@@ -296,12 +306,15 @@ export default function SystemLibraryPage() {
         });
       })
       .catch((err) => {
-        if (isActive) setRatingError(err.message || "Không thể tải đánh giá tài liệu.");
+        if (isActive)
+          setRatingError(err.message || "Không thể tải đánh giá tài liệu.");
       })
       .finally(() => {
         if (isActive) setRatingLoading(false);
       });
-    return () => { isActive = false; };
+    return () => {
+      isActive = false;
+    };
   }, [selectedDocument?.id, token]);
 
   const handleRateDocument = async (rating) => {
@@ -321,7 +334,11 @@ export default function SystemLibraryPage() {
       rating_count: previousMyRating ? previousCount : previousCount + 1,
     }));
     try {
-      const result = await api.rateDocument(selectedDocument.id, { documentType: "community_library", rating }, token);
+      const result = await api.rateDocument(
+        selectedDocument.id,
+        { documentType: "community_library", rating },
+        token,
+      );
       setDocumentRating(result);
       patchDocument(selectedDocument.id, {
         vote_avg: result.average_rating,
@@ -330,14 +347,18 @@ export default function SystemLibraryPage() {
         rating_count: result.rating_count,
         my_rating: result.my_rating,
       });
-      setSelectedDocument((current) => current?.id === selectedDocument.id ? {
-        ...current,
-        vote_avg: result.average_rating,
-        vote_count: result.rating_count,
-        average_rating: result.average_rating,
-        rating_count: result.rating_count,
-        my_rating: result.my_rating,
-      } : current);
+      setSelectedDocument((current) =>
+        current?.id === selectedDocument.id
+          ? {
+              ...current,
+              vote_avg: result.average_rating,
+              vote_count: result.rating_count,
+              average_rating: result.average_rating,
+              rating_count: result.rating_count,
+              my_rating: result.my_rating,
+            }
+          : current,
+      );
       setNotice(`Bạn đã đánh giá tài liệu ${result.my_rating}/5 sao.`);
     } catch (err) {
       setDocumentRating(previousRating);
@@ -399,7 +420,11 @@ export default function SystemLibraryPage() {
         token,
         (progress) => {
           setUploadProgress(progress);
-          setUploadStatus(progress >= 100 ? "Đang đọc tài liệu và tạo tag/tóm tắt" : "Đang tải lên");
+          setUploadStatus(
+            progress >= 100
+              ? "Đang đọc tài liệu và tạo tag/tóm tắt"
+              : "Đang tải lên",
+          );
         },
       );
       setUploadFile(null);
@@ -468,12 +493,8 @@ export default function SystemLibraryPage() {
         <span className="sl-hero__eyebrow">
           <Sparkles size={14} /> Community library · Internet paper search
         </span>
-        <h1>Thư viện tài liệu cộng đồng cho nghiên cứu chuyên nghiệp</h1>
-        <p>
-          Upload, xem, lọc, đánh giá trong modal và download tài liệu public hợp lệ. Tab Paper
-          internet search dùng abstraction PaperProvider và OpenAlex, không
-          scrape Google Scholar trực tiếp.
-        </p>
+        <h1>Thư viện Tài liệu Cộng đồng</h1>
+        <p>Upload, xem, lọc, đánh giá và download tài liệu public hợp lệ.</p>
         <div className="sl-tabs">
           <button
             className={`sl-tab ${activeTab === "community" ? "is-active" : ""}`}
@@ -516,7 +537,13 @@ export default function SystemLibraryPage() {
         {notice && (
           <div className="sl-notice">
             <span>{notice}</span>
-            <button type="button" onClick={() => setNotice("")} aria-label="Đóng thông báo"><X size={16} /></button>
+            <button
+              type="button"
+              onClick={() => setNotice("")}
+              aria-label="Đóng thông báo"
+            >
+              <X size={16} />
+            </button>
           </div>
         )}
       </section>
@@ -568,21 +595,31 @@ export default function SystemLibraryPage() {
             </h2>
             <p>
               {canPublish(user)
-                ? "Tải lên tài liệu nghiên cứu để mọi người có thể tìm kiếm và học tập. Tài liệu của người dùng có thể cần chờ duyệt trước khi public."
+                ? "Tải lên tài liệu nghiên cứu để mọi người có thể cùng tìm kiếm và học tập. Tài liệu tải lên cần chờ phê duyệt trước khi public."
                 : "Tài khoản của bạn đã bị tạm khóa quyền đăng tài liệu. Vui lòng liên hệ quản trị viên."}
             </p>
             <div className="sl-upload-layout">
               <form className="sl-upload-form" onSubmit={handleUpload}>
-                <label className={`sl-dropzone ${uploadFile ? "is-selected" : ""}`}>
+                <label
+                  className={`sl-dropzone ${uploadFile ? "is-selected" : ""}`}
+                >
                   <input
                     type="file"
                     accept=".pdf,.docx,.txt,.md"
-                    onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
+                    onChange={(event) =>
+                      setUploadFile(event.target.files?.[0] || null)
+                    }
                   />
                   <span className="sl-dropzone__content">
-                    <span className="sl-dropzone__icon"><FileUp size={24} /></span>
-                    <strong>{uploadFile ? uploadFile.name : "Kéo thả tài liệu vào đây hoặc bấm để chọn file."}</strong>
-                    <p>Hỗ trợ PDF, DOCX, TXT, MD. Citation threshold để trống sẽ tự gửi mặc định 0.</p>
+                    <span className="sl-dropzone__icon">
+                      <FileUp size={24} />
+                    </span>
+                    <strong>
+                      {uploadFile
+                        ? uploadFile.name
+                        : "Kéo thả tài liệu vào đây hoặc bấm để chọn file."}
+                    </strong>
+                    <p>Hỗ trợ PDF, DOCX, TXT, MD.</p>
                   </span>
                 </label>
                 <div className="sl-upload-grid">
@@ -598,7 +635,9 @@ export default function SystemLibraryPage() {
                     <span>Category</span>
                     <input
                       value={uploadCategory}
-                      onChange={(event) => setUploadCategory(event.target.value)}
+                      onChange={(event) =>
+                        setUploadCategory(event.target.value)
+                      }
                       placeholder="VD: Machine Learning, Y sinh..."
                     />
                   </label>
@@ -607,7 +646,9 @@ export default function SystemLibraryPage() {
                     <textarea
                       rows={3}
                       value={uploadDescription}
-                      onChange={(event) => setUploadDescription(event.target.value)}
+                      onChange={(event) =>
+                        setUploadDescription(event.target.value)
+                      }
                       placeholder="Tóm tắt ngắn lý do tài liệu này hữu ích cho cộng đồng"
                     />
                   </label>
@@ -626,27 +667,73 @@ export default function SystemLibraryPage() {
                       min="0"
                       step="0.01"
                       value={uploadCitationThreshold}
-                      onChange={(event) => setUploadCitationThreshold(event.target.value)}
-                      placeholder="Mặc định: 0"
+                      onChange={(event) =>
+                        setUploadCitationThreshold(event.target.value)
+                      }
+                      placeholder="Hệ thống mặc định: 0"
                     />
-                    <small>Không nhập thì hệ thống gửi 0.</small>
                   </label>
                 </div>
-                <button className="sl-upload-btn" disabled={loading || !canPublish(user)}>
+                <button
+                  className="sl-upload-btn"
+                  disabled={loading || !canPublish(user)}
+                >
                   {loading ? "Đang xử lý..." : "Tải lên thư viện"}
                 </button>
               </form>
               <aside className="sl-upload-sidecar" aria-live="polite">
                 <h3>Trạng thái xử lý</h3>
-                <div className="sl-upload-progress" style={{ "--upload-progress": `${uploadProgress}%` }}><span /></div>
+                <div
+                  className="sl-upload-progress"
+                  style={{ "--upload-progress": `${uploadProgress}%` }}
+                >
+                  <span />
+                </div>
                 <ul className="sl-upload-steps">
-                  <li className={uploadStatus ? "is-done" : "is-active"}><CheckCircle2 size={15} /> Chọn file & metadata</li>
-                  <li className={loading && uploadStatus.includes("tải") ? "is-active" : uploadProgress >= 100 ? "is-done" : ""}><CheckCircle2 size={15} /> Đang tải lên</li>
-                  <li className={loading && uploadStatus.includes("đọc") ? "is-active" : uploadStatus === "Hoàn tất" ? "is-done" : ""}><CheckCircle2 size={15} /> Đang đọc tài liệu</li>
-                  <li className={loading && uploadStatus.includes("tag") ? "is-active" : uploadStatus === "Hoàn tất" ? "is-done" : ""}><CheckCircle2 size={15} /> Đang tạo tag/tóm tắt</li>
-                  <li className={uploadStatus === "Hoàn tất" ? "is-done" : ""}><CheckCircle2 size={15} /> Hoàn tất</li>
+                  <li className={uploadStatus ? "is-done" : "is-active"}>
+                    <CheckCircle2 size={15} /> Chọn file & metadata
+                  </li>
+                  <li
+                    className={
+                      loading && uploadStatus.includes("tải")
+                        ? "is-active"
+                        : uploadProgress >= 100
+                          ? "is-done"
+                          : ""
+                    }
+                  >
+                    <CheckCircle2 size={15} /> Đang tải lên
+                  </li>
+                  <li
+                    className={
+                      loading && uploadStatus.includes("đọc")
+                        ? "is-active"
+                        : uploadStatus === "Hoàn tất"
+                          ? "is-done"
+                          : ""
+                    }
+                  >
+                    <CheckCircle2 size={15} /> Đang đọc tài liệu
+                  </li>
+                  <li
+                    className={
+                      loading && uploadStatus.includes("tag")
+                        ? "is-active"
+                        : uploadStatus === "Hoàn tất"
+                          ? "is-done"
+                          : ""
+                    }
+                  >
+                    <CheckCircle2 size={15} /> Đang tạo tag/tóm tắt
+                  </li>
+                  <li className={uploadStatus === "Hoàn tất" ? "is-done" : ""}>
+                    <CheckCircle2 size={15} /> Hoàn tất
+                  </li>
                 </ul>
-                <p>{uploadStatus || "Sau khi bấm tải lên, tiến trình sẽ hiển thị tại đây."}</p>
+                <p>
+                  {uploadStatus ||
+                    "Sau khi bấm tải lên, tiến trình sẽ hiển thị tại đây."}
+                </p>
               </aside>
             </div>
           </section>
