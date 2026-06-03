@@ -583,6 +583,31 @@ export const api = {
       axiosInstance.post("/api/cross-analysis/chat", payload, { headers: authHeader(token) })
     ),
 
+  createCrossAnalysisSession: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/cross-analysis/sessions", payload, { headers: authHeader(token) })
+    ),
+
+  listCrossAnalysisSessions: (token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/cross-analysis/sessions", { headers: authHeader(token) })
+    ),
+
+  getCrossAnalysisSession: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/cross-analysis/sessions/${sessionId}`, { headers: authHeader(token) })
+    ),
+
+  updateCrossAnalysisSession: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.patch(`/api/cross-analysis/sessions/${sessionId}`, payload, { headers: authHeader(token) })
+    ),
+
+  deleteCrossAnalysisSession: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/cross-analysis/sessions/${sessionId}`, { headers: authHeader(token) })
+    ),
+
   // ── ACADEMIC LENS ──────────────────────────────────────────────────────
   uploadAcademicLensDocument: (file, token, onProgress) => {
     const formData = new FormData();

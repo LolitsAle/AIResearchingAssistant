@@ -30,9 +30,9 @@ const NAV_ITEMS = [
   {
     to: "/cross-analysis",
     icon: GitCompare,
-    label: "So sánh Tương quan",
+    label: "Đối chiếu Tài liệu",
     description:
-      "So sánh sâu hai tài liệu, phát hiện mâu thuẫn và xuất bảng đối chiếu.",
+      "Đối chiếu nội dung hai tài liệu với bằng chứng theo từng tiêu chí.",
   },
   {
     to: "/system-library",
