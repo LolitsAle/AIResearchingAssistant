@@ -85,7 +85,7 @@ const STYLES = `
   .al-note-toast { position:fixed; right:24px; bottom:78px; z-index:130; border:1px solid rgba(196,164,100,.24); background:#201810; color:#f2d48b; border-radius:14px; padding:10px 12px; box-shadow:0 18px 50px rgba(0,0,0,.4); }
   .al-document-card { display:flex; flex-direction:row; justify-content:space-between; align-items:center; gap:14px; padding:18px 24px; background:linear-gradient(135deg, rgba(196,164,100,.10), rgba(255,255,255,.025)); }
   .al-document-card-title { min-width:0; }
-  .al-document-card h2 { margin:4px 0; color:#f3ebdc; font-size:18px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .al-document-card h2 { margin:4px 0; color:#f3ebdc; font-size:18px; max-width:100%; overflow-wrap:anywhere; line-height:1.35; }
   .al-document-card p { margin:0; color:#9f9484; font-size:12px; }
   .al-document-card-actions { display:flex; flex-wrap:wrap; justify-content:flex-start; gap:8px; }
   .al-document-card-actions button { border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.055); color:#d8caa8; border-radius:13px; padding:9px 11px; display:inline-flex; align-items:center; gap:7px; cursor:pointer; }
@@ -206,15 +206,8 @@ const STYLES = `
   }
 `;
 
-
-function shortDocumentTitle(title) {
-  const clean = String(title || 'Chưa chọn tài liệu').trim();
-  return clean.length > 78 ? `${clean.slice(0, 46)}…${clean.slice(-20)}` : clean;
-}
-
 function DocumentSourceCard({ document, uploading, onUploadClick, onOpenLibrary }) {
   const title = document?.title || document?.filename || 'Chưa chọn tài liệu';
-  const displayTitle = shortDocumentTitle(title);
   const detail = document
     ? `${document.source_type === 'system_library' ? 'Thư viện cộng đồng' : document.is_temporary ? 'Tài liệu tạm thời' : 'Tài liệu'} · ${String(document.file_type || 'FILE').toUpperCase()}`
     : 'Upload tài liệu hoặc chọn từ Thư viện cộng đồng để bắt đầu.';
@@ -222,7 +215,7 @@ function DocumentSourceCard({ document, uploading, onUploadClick, onOpenLibrary 
     <section className="al-document-card">
       <div className="al-document-card-title" title={title}>
         <span className="al-eyebrow">Tài liệu đang đọc</span>
-        <h2>{displayTitle}</h2>
+        <h2>{title}</h2>
         <p>{detail}</p>
       </div>
       <div className="al-document-card-actions">
