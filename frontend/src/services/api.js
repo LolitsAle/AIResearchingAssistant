@@ -419,6 +419,7 @@ export const api = {
 
 
   // ── SYSTEM LIBRARY ───────────────────────────────────────────────────────
+  // Legacy API name; UI treats this as unified System / Community / Internet library.
   listSystemLibraryDocuments: (params, token) =>
     unwrapRequest(() =>
       axiosInstance.get("/api/system-library/documents", { params, headers: authHeader(token) })
@@ -445,6 +446,7 @@ export const api = {
     formData.append("category", payload.category || "");
     formData.append("tags", payload.tags || "");
     formData.append("citation_threshold", Number.isFinite(Number(payload.citationThreshold)) ? Number(payload.citationThreshold) : 0);
+    formData.append("copyright_confirmed", payload.copyrightConfirmed ? "true" : "false");
     return unwrapRequest(() =>
       axiosInstance.post("/api/system-library/documents/upload", formData, {
         headers: { ...authHeader(token) },
@@ -480,6 +482,15 @@ export const api = {
 
   importInternetPaperToLibrary: (paper, token) =>
     unwrapRequest(() => axiosInstance.post("/api/system-library/papers/import", { paper }, { headers: authHeader(token) })),
+
+  updateMyLibraryDocument: (documentId, payload, token) =>
+    unwrapRequest(() => axiosInstance.patch(`/api/system-library/my-documents/${documentId}`, payload, { headers: authHeader(token) })),
+
+  deleteMyLibraryDocument: (documentId, token) =>
+    unwrapRequest(() => axiosInstance.delete(`/api/system-library/my-documents/${documentId}`, { headers: authHeader(token) })),
+
+  resubmitMyLibraryDocument: (documentId, token) =>
+    unwrapRequest(() => axiosInstance.post(`/api/system-library/my-documents/${documentId}/resubmit`, {}, { headers: authHeader(token) })),
 
   updateUserLibraryUploadPermission: (userId, payload, token) =>
     unwrapRequest(() => axiosInstance.patch(`/api/admin/users/${userId}/library-upload`, payload, { headers: authHeader(token) })),
