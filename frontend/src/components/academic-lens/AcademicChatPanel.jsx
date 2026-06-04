@@ -21,6 +21,7 @@ export default function AcademicChatPanel({ activeTab, onTabChange, messages, on
 
   return (
     <aside className={`al-chat ${isWeb ? 'is-web' : ''}`}>
+      <div className="al-chat-title"><strong>{isWeb ? 'Global Web Chat' : 'Document AI'}</strong><span>{isWeb ? 'Nguồn web độc lập, không dùng PDF.' : 'Hỏi đáp dựa trên tài liệu hiện tại.'}</span></div>
       <div className="al-chat-tabs">
         <button type="button" className={activeTab === 'document' ? 'active' : ''} onClick={() => onTabChange('document')}><Sparkles size={15} /> Document AI</button>
         <button type="button" className={activeTab === 'web' ? 'active' : ''} onClick={() => onTabChange('web')}><Globe2 size={15} /> Global Web Chat</button>

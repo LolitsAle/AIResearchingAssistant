@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Search, X } from 'lucide-react';
+import { AlertTriangle, FileText, MessageSquareText, NotebookPen, Search, X } from 'lucide-react';
 import AcademicChatPanel from '../components/academic-lens/AcademicChatPanel';
 import AcademicDocumentViewer from '../components/academic-lens/AcademicDocumentViewer';
 import AcademicNotepad from '../components/academic-lens/AcademicNotepad';
@@ -10,6 +10,34 @@ import { api } from '../services/api';
 
 const ACADEMIC_LENS_SESSION_KEY = 'academicLens:session';
 const ACADEMIC_LENS_LAST_PATH_KEY = 'academicLens:lastPath';
+const ACADEMIC_LENS_LAYOUT_KEY = 'academicLens:layoutPreferences';
+
+const DEFAULT_LAYOUT = {
+  academicLensLayoutMode: 'reading',
+  notepadDock: 'right',
+  isNotepadCollapsed: false,
+  viewerWidth: 62,
+  rightPanelWidth: 380,
+  notepadHeight: 320,
+  chatHeight: 420,
+};
+
+const MODE_LAYOUTS = {
+  reading: { academicLensLayoutMode: 'reading', viewerWidth: 70, notepadDock: 'bottom', isNotepadCollapsed: true, notepadHeight: 240, chatHeight: 360 },
+  chat: { academicLensLayoutMode: 'chat', viewerWidth: 54, notepadDock: 'right', isNotepadCollapsed: true, chatHeight: 560 },
+  note: { academicLensLayoutMode: 'note', viewerWidth: 58, notepadDock: 'right', isNotepadCollapsed: false, chatHeight: 300, notepadHeight: 360 },
+  vision: { academicLensLayoutMode: 'vision', viewerWidth: 72, notepadDock: 'bottom', isNotepadCollapsed: true, chatHeight: 360 },
+};
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const loadAcademicLensLayout = () => {
+  try {
+    return { ...DEFAULT_LAYOUT, ...(JSON.parse(localStorage.getItem(ACADEMIC_LENS_LAYOUT_KEY) || '{}') || {}) };
+  } catch {
+    return DEFAULT_LAYOUT;
+  }
+};
 
 const loadAcademicLensSession = () => {
   try {
@@ -26,11 +54,35 @@ const STYLES = `
   .al-hero h1 { margin:8px 0; font-size:clamp(30px,4.5vw,52px); color:#f3ebdc; }
   .al-hero p, .al-muted { color:#9f9484; line-height:1.65; font-size:13px; }
   .al-eyebrow { color:#d8bd77; font-size:12px; font-weight:900; text-transform:uppercase; letter-spacing:.08em; }
-  .al-workspace { display:grid; grid-template-columns:minmax(0,1fr) minmax(330px,390px); gap:14px; align-items:start; }
-  .al-main { min-width:0; border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(255,255,255,.035); overflow:hidden; display:flex; flex-direction:column; height:min(82vh,920px); min-height:620px; }
+  .al-layout-shell { display:grid; gap:10px; }
+  .al-mobile-tabs { display:none; gap:8px; padding:8px; border:1px solid rgba(255,255,255,.08); border-radius:18px; background:rgba(255,255,255,.035); }
+  .al-mobile-tabs button { flex:1; border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.055); color:#d8caa8; border-radius:12px; padding:9px; display:inline-flex; align-items:center; justify-content:center; gap:7px; cursor:pointer; }
+  .al-mobile-tabs button.active { background:linear-gradient(135deg,#d4b66f,#8a6a30); color:#18130d; font-weight:900; }
+  .al-workspace { display:grid; grid-template-columns:minmax(40%,1fr) minmax(320px,420px); gap:0; align-items:stretch; min-height:640px; }
+  .al-workspace.dock-bottom { grid-template-rows:minmax(560px, calc(100vh - 220px)) 10px auto; }
+  .al-workspace.dock-right { grid-template-rows:minmax(640px, calc(100vh - 190px)); }
+  .al-main { min-width:0; border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(255,255,255,.035); overflow:hidden; display:flex; flex-direction:column; min-height:0; height:100%; }
+  .al-right-panel { min-width:320px; min-height:0; display:flex; flex-direction:column; gap:10px; }
+  .al-chat-pane, .al-note-pane { min-height:0; height:100%; }
+  .al-right-stack { min-height:0; display:grid; grid-template-rows:minmax(240px, var(--chat-height, 420px)) 10px minmax(220px, 1fr); height:100%; }
+  .al-right-stack.note-collapsed { grid-template-rows:minmax(240px, 1fr); }
+  .al-bottom-note { grid-column:1 / -1; min-height:220px; }
+  .al-resizer { background:transparent; position:relative; touch-action:none; z-index:20; }
+  .al-resizer::after { content:''; position:absolute; border-radius:999px; background:rgba(216,189,119,.22); transition:background .15s ease; }
+  .al-resizer:hover::after { background:rgba(216,189,119,.55); }
+  .al-resizer.vertical { width:10px; cursor:col-resize; }
+  .al-resizer.vertical::after { top:16px; bottom:16px; left:4px; width:2px; }
+  .al-resizer.horizontal { height:10px; cursor:row-resize; }
+  .al-workspace > .al-resizer.horizontal { grid-column:1 / -1; }
+  .al-resizer.horizontal::after { left:16px; right:16px; top:4px; height:2px; }
+  .al-floating-note { position:fixed; right:24px; bottom:24px; z-index:130; border:1px solid rgba(196,164,100,.32); background:linear-gradient(135deg,#d4b66f,#8a6a30); color:#18130d; border-radius:999px; padding:11px 14px; display:inline-flex; align-items:center; gap:8px; font-weight:900; box-shadow:0 18px 50px rgba(0,0,0,.4); cursor:pointer; }
+  .al-note-toast { position:fixed; right:24px; bottom:78px; z-index:130; border:1px solid rgba(196,164,100,.24); background:#201810; color:#f2d48b; border-radius:14px; padding:10px 12px; box-shadow:0 18px 50px rgba(0,0,0,.4); }
   .al-toolbar { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:14px 16px; border-bottom:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.035); }
   .al-toolbar h2 { margin:4px 0 0; color:#f3ebdc; font-size:18px; }
-  .al-toolbar-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+  .al-toolbar-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; align-items:center; }
+  .al-mode-switcher { display:inline-flex; gap:4px; padding:4px; border:1px solid rgba(255,255,255,.08); border-radius:14px; background:rgba(0,0,0,.14); }
+  .al-mode-switcher button { padding:7px 9px !important; border-radius:10px !important; font-size:12px; }
+  .al-mode-switcher button.active, .al-toolbar-actions button.is-accent, .al-icon-row button.active { color:#18130d; background:linear-gradient(135deg,#d4b66f,#8a6a30); font-weight:900; }
   .al-toolbar-actions button, .al-chat-form button, .al-chat-tabs button, .al-icon-row button, .al-msg-actions button, .al-library-modal button { border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.055); color:#d8caa8; border-radius:13px; padding:9px 11px; display:inline-flex; align-items:center; gap:7px; cursor:pointer; }
   button:disabled { opacity:.45; cursor:not-allowed; }
   .al-viewer { position:relative; flex:1; min-height:0; overflow:auto; background:#12100c; overscroll-behavior:contain; }
@@ -50,8 +102,11 @@ const STYLES = `
   .al-snipping-cancel, .al-snipping-help { position:fixed; z-index:111; left:24px; border-radius:12px; padding:10px 12px; }
   .al-snipping-cancel { top:20px; border:1px solid rgba(255,255,255,.14); background:#201810; color:#f0b5aa; cursor:pointer; }
   .al-snipping-help { top:68px; color:#f3ebdc; background:rgba(32,24,16,.86); }
-  .al-chat { border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(255,255,255,.035); display:flex; flex-direction:column; height:min(82vh,920px); min-height:620px; overflow:hidden; }
+  .al-chat { border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(255,255,255,.035); display:flex; flex-direction:column; height:100%; min-height:240px; overflow:hidden; }
   .al-chat.is-web { border-color:rgba(129,196,255,.2); background:rgba(80,130,180,.055); }
+  .al-chat-title { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:11px 12px 0; }
+  .al-chat-title strong { color:#f3ebdc; }
+  .al-chat-title span { color:#8e8374; font-size:12px; }
   .al-chat-tabs { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:12px; border-bottom:1px solid rgba(255,255,255,.08); }
   .al-chat-tools { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 12px; color:#8e8374; font-size:12px; border-bottom:1px solid rgba(255,255,255,.06); }
   .al-chat-tool-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
@@ -78,13 +133,13 @@ const STYLES = `
   .al-image-draft > button { position:absolute; top:8px; right:8px; padding:6px; }
   .al-image-draft div { display:flex; flex-wrap:wrap; gap:6px; }
   .al-image-draft div button { font-size:12px; padding:7px 8px; }
-  .al-notepad { grid-column:1 / -1; border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(255,255,255,.035); overflow:hidden; scroll-margin-top:24px; }
+  .al-notepad { height:100%; min-height:220px; border:1px solid rgba(255,255,255,.08); border-radius:24px; background:rgba(255,255,255,.035); overflow:hidden; scroll-margin-top:24px; display:flex; flex-direction:column; }
   .al-notepad-head { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px; border-bottom:1px solid rgba(255,255,255,.08); }
   .al-notepad-head strong { display:block; color:#f3ebdc; }
   .al-notepad-head span { display:block; color:#8e8374; font-size:12px; margin-top:3px; }
   .al-icon-row { display:flex; flex-wrap:wrap; gap:6px; }
-  .al-notepad textarea { width:100%; min-height:260px; max-height:520px; overflow:auto; border:0; background:rgba(0,0,0,.18); color:#eee6d8; padding:14px; outline:none; resize:vertical; font-family:'DM Sans', sans-serif; }
-  .al-markdown-preview { min-height:260px; max-height:520px; padding:18px; color:#ded4c4; line-height:1.7; overflow:auto; }
+  .al-notepad textarea { width:100%; flex:1; min-height:220px; overflow:auto; border:0; background:rgba(0,0,0,.18); color:#eee6d8; padding:14px; outline:none; resize:none; font-family:'DM Sans', sans-serif; }
+  .al-markdown-preview { flex:1; min-height:220px; padding:18px; color:#ded4c4; line-height:1.7; overflow:auto; }
   .al-library-backdrop { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.7); display:grid; place-items:center; padding:20px; }
   .al-library-modal { width:min(860px,100%); max-height:84vh; overflow:auto; border:1px solid rgba(255,255,255,.1); background:#17130e; border-radius:24px; padding:16px; }
   .al-library-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
@@ -116,8 +171,24 @@ const STYLES = `
   .al-context-list article.is-disabled { opacity:.58; }
   .al-context-list p { color:#ded4c4; font-size:13px; line-height:1.55; max-height:110px; overflow:auto; }
   .al-context-list small { color:#8e8374; }
-  @media (max-width:1050px) { .al-workspace { grid-template-columns:1fr; } .al-main, .al-chat { height:auto; min-height:520px; } .al-viewer { max-height:72vh; } }
-  @media (max-width:720px) { .al-toolbar { align-items:flex-start; flex-direction:column; } .al-toolbar-actions { justify-content:flex-start; } }
+  @media (max-width:1050px) { .al-workspace { grid-template-columns:minmax(0,1fr) minmax(320px,38vw) !important; } .al-toolbar { align-items:flex-start; flex-direction:column; } .al-toolbar-actions { justify-content:flex-start; } }
+  @media (max-width:820px) {
+    .al-page { padding:14px 10px; }
+    .al-hero { padding:18px; }
+    .al-mobile-tabs { display:flex; position:sticky; top:8px; z-index:60; }
+    .al-workspace, .al-workspace.dock-bottom, .al-workspace.dock-right { display:block; min-height:0; }
+    .al-main, .al-chat, .al-notepad { height:calc(100vh - 190px); min-height:520px; }
+    .al-main:not(.mobile-active), .al-right-panel:not(.mobile-active), .al-bottom-note:not(.mobile-active) { display:none; }
+    .al-right-panel { min-width:0; }
+    .al-chat-pane:not(.mobile-active), .al-note-pane:not(.mobile-active) { display:none; }
+    .al-chat-pane.mobile-active, .al-note-pane.mobile-active { display:block; height:100%; }
+    .al-right-stack { display:block; height:auto; }
+    .al-bottom-note { height:auto !important; }
+    .al-right-stack .al-chat, .al-right-stack .al-notepad { height:calc(100vh - 190px); }
+    .al-right-stack > .al-resizer, .al-workspace > .al-resizer { display:none; }
+    .al-mode-switcher { overflow:auto; max-width:100%; }
+    .al-floating-note { right:14px; bottom:14px; }
+  }
 `;
 
 function LibraryModal({ open, onClose, onSelect }) {
@@ -151,6 +222,7 @@ function LibraryModal({ open, onClose, onSelect }) {
 export default function AcademicLensPage() {
   const { token } = useAuth();
   const savedSession = useMemo(loadAcademicLensSession, []);
+  const savedLayout = useMemo(loadAcademicLensLayout, []);
   const fileInputRef = useRef(null);
   const [document, setDocument] = useState(savedSession.document || null);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -170,6 +242,9 @@ export default function AcademicLensPage() {
   const [activeCitation, setActiveCitation] = useState(null);
   const [sessionId, setSessionId] = useState(savedSession.sessionId || null);
   const [webConfigured, setWebConfigured] = useState(true);
+  const [layout, setLayout] = useState(savedLayout);
+  const [mobileTab, setMobileTab] = useState('document');
+  const [noteToast, setNoteToast] = useState('');
 
   const docKey = useMemo(() => document?.id ? `academic-lens-note:${document.source_type}:${document.id}` : 'academic-lens-note:draft', [document]);
 
@@ -180,6 +255,85 @@ export default function AcademicLensPage() {
   useEffect(() => {
     localStorage.setItem(ACADEMIC_LENS_SESSION_KEY, JSON.stringify({ document, activeTab, messages, webContexts, sessionId }));
   }, [document, activeTab, messages, webContexts, sessionId]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      try {
+        localStorage.setItem(ACADEMIC_LENS_LAYOUT_KEY, JSON.stringify(layout));
+      } catch {
+        // Layout preferences are optional and must never block reading/chat/note UX.
+      }
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [layout]);
+
+  useEffect(() => {
+    if (!noteToast) return undefined;
+    const timeout = setTimeout(() => setNoteToast(''), 1800);
+    return () => clearTimeout(timeout);
+  }, [noteToast]);
+
+  const updateLayout = (patch) => setLayout((current) => ({ ...current, ...patch }));
+
+  const applyLayoutMode = (mode) => {
+    updateLayout(MODE_LAYOUTS[mode] || MODE_LAYOUTS.reading);
+    if (mode === 'note') setMobileTab('notes');
+    else if (mode === 'chat') setMobileTab('chat');
+    else setMobileTab('document');
+    if (mode === 'vision') setSnipping(false);
+  };
+
+  const resetLayout = () => setLayout(DEFAULT_LAYOUT);
+
+  const openNotepad = () => {
+    updateLayout({ isNotepadCollapsed: false });
+    setMobileTab('notes');
+    setTimeout(() => notepadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 0);
+  };
+
+  const startHorizontalResize = (event) => {
+    const workspace = event.currentTarget.closest('.al-workspace');
+    if (!workspace) return;
+    event.preventDefault();
+    const bounds = workspace.getBoundingClientRect();
+    const onMove = (moveEvent) => {
+      const nextViewerWidth = clamp(((moveEvent.clientX - bounds.left) / bounds.width) * 100, 40, 72);
+      updateLayout({ viewerWidth: Math.round(nextViewerWidth), rightPanelWidth: Math.round(bounds.width * (1 - nextViewerWidth / 100) - 10) });
+    };
+    const stop = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', stop, { once: true });
+  };
+
+  const startRightStackResize = (event) => {
+    const stack = event.currentTarget.closest('.al-right-stack');
+    if (!stack) return;
+    event.preventDefault();
+    const bounds = stack.getBoundingClientRect();
+    const onMove = (moveEvent) => updateLayout({ chatHeight: Math.round(clamp(moveEvent.clientY - bounds.top, 240, bounds.height - 220)) });
+    const stop = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', stop, { once: true });
+  };
+
+  const startBottomNoteResize = (event) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = layout.notepadHeight;
+    const onMove = (moveEvent) => updateLayout({ notepadHeight: Math.round(clamp(startHeight - (moveEvent.clientY - startY), 220, 520)) });
+    const stop = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', stop, { once: true });
+  };
 
   const selectDocument = (nextDocument) => {
     setDocument(nextDocument);
@@ -308,7 +462,12 @@ export default function AcademicLensPage() {
 
   const appendToNotepad = (content) => {
     setNotepad((current) => `${current}${current ? '\n\n' : ''}> AI Answer\n\n${content}`);
-    setTimeout(() => notepadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+    if (layout.isNotepadCollapsed) {
+      setNoteToast('Đã thêm vào ghi chú. Bấm “Mở ghi chú” để xem.');
+      return;
+    }
+    setMobileTab('notes');
+    setTimeout(() => notepadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 0);
   };
 
   const resetChatHistory = () => {
@@ -318,9 +477,7 @@ export default function AcademicLensPage() {
     if (sessionId) api.clearAcademicLensSessionMessages(sessionId, token).catch(() => {});
   };
 
-  const scrollToNotepad = () => {
-    notepadRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
+  const scrollToNotepad = openNotepad;
 
   const addToContext = async (message) => {
     const firstCitation = message.citations?.[0] || {};
@@ -348,14 +505,66 @@ export default function AcademicLensPage() {
       {errors.upload && <div className="al-warning"><AlertTriangle size={16} /> {errors.upload}</div>}
       {errors.preview && <div className="al-warning"><AlertTriangle size={16} /> {errors.preview}</div>}
       <input ref={fileInputRef} type="file" hidden accept=".pdf,.docx,.txt,.md" onChange={(event) => event.target.files?.[0] && uploadDocument(event.target.files[0])} />
-      <div className="al-workspace">
-        <main className="al-main">
-          <DocumentToolbar title={document?.title || document?.filename} uploading={loading.uploading} onUploadClick={() => fileInputRef.current?.click()} onOpenLibrary={() => setLibraryOpen(true)} onToggleSnip={() => setSnipping(true)} onScrollToNotepad={scrollToNotepad} />
-          <AcademicDocumentViewer document={document} snipping={snipping} onStopSnipping={() => setSnipping(false)} onSnip={setPendingImage} onSelectionAction={handleSelectionAction} activeCitation={activeCitation} />
-        </main>
-        <AcademicChatPanel activeTab={activeTab} onTabChange={setActiveTab} messages={messages} onSend={sendChat} onReset={resetChatHistory} pendingImage={pendingImage} onClearImage={() => setPendingImage(null)} onAddToNotepad={appendToNotepad} onAddToContext={addToContext} sending={loading.chatSending || loading.webSearching || loading.visionAnalyzing} errors={errors} webConfigured={webConfigured} onOpenContexts={() => setContextDrawerOpen(true)} onCitationSelect={setActiveCitation} />
-        <AcademicNotepad ref={notepadRef} value={notepad} onChange={(value) => { setNoteSaveStatus('idle'); setNotepad(value); }} onSave={saveNotepad} saveStatus={noteSaveStatus} storage={noteStorage} />
+      <div className="al-layout-shell">
+        <div className="al-mobile-tabs" role="tablist" aria-label="Academic Lens mobile panels">
+          <button type="button" className={mobileTab === 'document' ? 'active' : ''} onClick={() => setMobileTab('document')}><FileText size={15} /> Tài liệu</button>
+          <button type="button" className={mobileTab === 'chat' ? 'active' : ''} onClick={() => setMobileTab('chat')}><MessageSquareText size={15} /> Chat</button>
+          <button type="button" className={mobileTab === 'notes' ? 'active' : ''} onClick={openNotepad}><NotebookPen size={15} /> Ghi chú</button>
+        </div>
+        <div
+          className={`al-workspace dock-${layout.notepadDock} mode-${layout.academicLensLayoutMode}`}
+          style={{
+            gridTemplateColumns: `${layout.viewerWidth}% 10px minmax(320px, 1fr)`,
+            '--chat-height': `${layout.chatHeight}px`,
+          }}
+        >
+          <main className={`al-main ${mobileTab === 'document' ? 'mobile-active' : ''}`}>
+            <DocumentToolbar
+              title={document?.title || document?.filename}
+              uploading={loading.uploading}
+              layoutMode={layout.academicLensLayoutMode}
+              notepadCollapsed={layout.isNotepadCollapsed}
+              onUploadClick={() => fileInputRef.current?.click()}
+              onOpenLibrary={() => setLibraryOpen(true)}
+              onToggleSnip={() => setSnipping(true)}
+              onOpenNotepad={openNotepad}
+              onLayoutModeChange={applyLayoutMode}
+              onResetLayout={resetLayout}
+            />
+            <AcademicDocumentViewer document={document} snipping={snipping} onStopSnipping={() => setSnipping(false)} onSnip={setPendingImage} onSelectionAction={handleSelectionAction} activeCitation={activeCitation} />
+          </main>
+          <div className="al-resizer vertical" role="separator" aria-label="Resize viewer and side panel" onPointerDown={startHorizontalResize} />
+          {layout.notepadDock === 'right' ? (
+            <aside className={`al-right-panel ${mobileTab === 'chat' || mobileTab === 'notes' ? 'mobile-active' : ''}`}>
+              <div className={`al-right-stack ${layout.isNotepadCollapsed ? 'note-collapsed' : ''}`}>
+                <div className={`al-chat-pane ${mobileTab === 'chat' ? 'mobile-active' : ''}`}>
+                  <AcademicChatPanel activeTab={activeTab} onTabChange={setActiveTab} messages={messages} onSend={sendChat} onReset={resetChatHistory} pendingImage={pendingImage} onClearImage={() => setPendingImage(null)} onAddToNotepad={appendToNotepad} onAddToContext={addToContext} sending={loading.chatSending || loading.webSearching || loading.visionAnalyzing} errors={errors} webConfigured={webConfigured} onOpenContexts={() => setContextDrawerOpen(true)} onCitationSelect={setActiveCitation} />
+                </div>
+                {!layout.isNotepadCollapsed && <div className="al-resizer horizontal" role="separator" aria-label="Resize chat and notes" onPointerDown={startRightStackResize} />}
+                {!layout.isNotepadCollapsed && (
+                  <div className={`al-note-pane ${mobileTab === 'notes' ? 'mobile-active' : ''}`}>
+                    <AcademicNotepad ref={notepadRef} value={notepad} onChange={(value) => { setNoteSaveStatus('idle'); setNotepad(value); }} onSave={saveNotepad} saveStatus={noteSaveStatus} storage={noteStorage} dock={layout.notepadDock} onDockChange={(notepadDock) => updateLayout({ notepadDock, isNotepadCollapsed: false })} onCollapse={() => updateLayout({ isNotepadCollapsed: true })} />
+                  </div>
+                )}
+              </div>
+            </aside>
+          ) : (
+            <aside className={`al-right-panel ${mobileTab === 'chat' ? 'mobile-active' : ''}`}>
+              <div className={`al-chat-pane ${mobileTab === 'chat' ? 'mobile-active' : ''}`}>
+                <AcademicChatPanel activeTab={activeTab} onTabChange={setActiveTab} messages={messages} onSend={sendChat} onReset={resetChatHistory} pendingImage={pendingImage} onClearImage={() => setPendingImage(null)} onAddToNotepad={appendToNotepad} onAddToContext={addToContext} sending={loading.chatSending || loading.webSearching || loading.visionAnalyzing} errors={errors} webConfigured={webConfigured} onOpenContexts={() => setContextDrawerOpen(true)} onCitationSelect={setActiveCitation} />
+              </div>
+            </aside>
+          )}
+          {layout.notepadDock === 'bottom' && !layout.isNotepadCollapsed && <div className="al-resizer horizontal" role="separator" aria-label="Resize bottom notes" onPointerDown={startBottomNoteResize} />}
+          {layout.notepadDock === 'bottom' && !layout.isNotepadCollapsed && (
+            <section className={`al-bottom-note ${mobileTab === 'notes' ? 'mobile-active' : ''}`} style={{ height: `${layout.notepadHeight}px` }}>
+              <AcademicNotepad ref={notepadRef} value={notepad} onChange={(value) => { setNoteSaveStatus('idle'); setNotepad(value); }} onSave={saveNotepad} saveStatus={noteSaveStatus} storage={noteStorage} dock={layout.notepadDock} onDockChange={(notepadDock) => updateLayout({ notepadDock, isNotepadCollapsed: false })} onCollapse={() => updateLayout({ isNotepadCollapsed: true })} />
+            </section>
+          )}
+        </div>
       </div>
+      {layout.isNotepadCollapsed && <button type="button" className="al-floating-note" onClick={openNotepad} title="Mở ghi chú"><NotebookPen size={16} /> Mở ghi chú</button>}
+      {noteToast && <div className="al-note-toast">{noteToast}</div>}
       <WebContextDrawer open={contextDrawerOpen} contexts={webContexts} loading={loading.contextLoading} error={errors.context} storage={contextStorage} onClose={() => setContextDrawerOpen(false)} onToggle={async (ctx, enabled) => { setWebContexts((current) => current.map((item) => item.id === ctx.id ? { ...item, enabled } : item)); if (ctx.id) await api.updateAcademicLensWebContext(ctx.id, { enabled }, token).catch(() => setContextStorage('memory_fallback')); }} onDelete={async (ctx) => { setWebContexts((current) => current.filter((item) => item !== ctx && item.id !== ctx.id)); if (ctx.id) await api.deleteAcademicLensWebContext(ctx.id, token).catch(() => setContextStorage('memory_fallback')); }} />
       <LibraryModal open={libraryOpen} onClose={() => setLibraryOpen(false)} onSelect={selectDocument} />
     </div>
