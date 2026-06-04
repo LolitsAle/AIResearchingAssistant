@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, FileText, MessageSquareText, NotebookPen, Search, X } from 'lucide-react';
+import { AlertTriangle, FileText, FileUp, Library, MessageSquareText, NotebookPen, Search, X } from 'lucide-react';
 import AcademicChatPanel from '../components/academic-lens/AcademicChatPanel';
 import AcademicDocumentViewer from '../components/academic-lens/AcademicDocumentViewer';
 import AcademicNotepad from '../components/academic-lens/AcademicNotepad';
@@ -82,8 +82,14 @@ const STYLES = `
   .al-floating-note, .al-floating-chat { position:fixed; right:24px; bottom:24px; z-index:130; border:1px solid rgba(196,164,100,.32); background:linear-gradient(135deg,#d4b66f,#8a6a30); color:#18130d; border-radius:999px; padding:11px 14px; display:inline-flex; align-items:center; gap:8px; font-weight:900; box-shadow:0 18px 50px rgba(0,0,0,.4); cursor:pointer; }
   .al-floating-chat { bottom:76px; background:linear-gradient(135deg,#8fc7ff,#4475a0); }
   .al-note-toast { position:fixed; right:24px; bottom:78px; z-index:130; border:1px solid rgba(196,164,100,.24); background:#201810; color:#f2d48b; border-radius:14px; padding:10px 12px; box-shadow:0 18px 50px rgba(0,0,0,.4); }
-  .al-toolbar { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:14px 16px; border-bottom:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.035); }
-  .al-toolbar h2 { margin:4px 0 0; color:#f3ebdc; font-size:18px; max-width:min(48vw, 560px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .al-document-card { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:14px 16px; border-bottom:1px solid rgba(255,255,255,.08); background:linear-gradient(135deg, rgba(196,164,100,.10), rgba(255,255,255,.025)); }
+  .al-document-card-title { min-width:0; }
+  .al-document-card h2 { margin:4px 0; color:#f3ebdc; font-size:18px; max-width:min(50vw, 620px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .al-document-card p { margin:0; color:#9f9484; font-size:12px; }
+  .al-document-card-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+  .al-document-card-actions button { border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.055); color:#d8caa8; border-radius:13px; padding:9px 11px; display:inline-flex; align-items:center; gap:7px; cursor:pointer; }
+  .al-toolbar { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:12px 16px; border-bottom:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.035); }
+  .al-toolbar h2 { margin:4px 0 0; color:#f3ebdc; font-size:16px; }
   .al-toolbar-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; align-items:center; }
   .al-mode-switcher { display:inline-grid; grid-template-columns:repeat(3, 74px); flex:0 0 auto; gap:4px; padding:4px; border:1px solid rgba(255,255,255,.08); border-radius:14px; background:rgba(0,0,0,.14); }
   .al-mode-switcher button { width:74px; justify-content:center; padding:7px 0 !important; border-radius:10px !important; font-size:12px; white-space:nowrap; }
@@ -197,6 +203,33 @@ const STYLES = `
     .al-floating-chat { right:14px; bottom:66px; }
   }
 `;
+
+
+function shortDocumentTitle(title) {
+  const clean = String(title || 'Chưa chọn tài liệu').trim();
+  return clean.length > 78 ? `${clean.slice(0, 46)}…${clean.slice(-20)}` : clean;
+}
+
+function DocumentSourceCard({ document, uploading, onUploadClick, onOpenLibrary }) {
+  const title = document?.title || document?.filename || 'Chưa chọn tài liệu';
+  const displayTitle = shortDocumentTitle(title);
+  const detail = document
+    ? `${document.source_type === 'system_library' ? 'Thư viện cộng đồng' : document.is_temporary ? 'Tài liệu tạm thời' : 'Tài liệu'} · ${String(document.file_type || 'FILE').toUpperCase()}`
+    : 'Upload tài liệu hoặc chọn từ Thư viện cộng đồng để bắt đầu.';
+  return (
+    <section className="al-document-card">
+      <div className="al-document-card-title" title={title}>
+        <span className="al-eyebrow">Tài liệu đang đọc</span>
+        <h2>{displayTitle}</h2>
+        <p>{detail}</p>
+      </div>
+      <div className="al-document-card-actions">
+        <button type="button" onClick={onUploadClick} disabled={uploading}><FileUp size={16} /> {uploading ? 'Đang tải...' : 'Upload'}</button>
+        <button type="button" onClick={onOpenLibrary}><Library size={16} /> Thư viện cộng đồng</button>
+      </div>
+    </section>
+  );
+}
 
 function LibraryModal({ open, onClose, onSelect }) {
   const { token } = useAuth();
@@ -530,14 +563,16 @@ export default function AcademicLensPage() {
           }}
         >
           <main className={`al-main ${mobileTab === 'document' ? 'mobile-active' : ''}`}>
-            <DocumentToolbar
-              title={document?.title || document?.filename}
+            <DocumentSourceCard
+              document={document}
               uploading={loading.uploading}
+              onUploadClick={() => fileInputRef.current?.click()}
+              onOpenLibrary={() => setLibraryOpen(true)}
+            />
+            <DocumentToolbar
               layoutMode={layout.academicLensLayoutMode}
               notepadCollapsed={layout.isNotepadCollapsed}
               chatCollapsed={layout.isChatCollapsed}
-              onUploadClick={() => fileInputRef.current?.click()}
-              onOpenLibrary={() => setLibraryOpen(true)}
               onToggleSnip={() => setSnipping(true)}
               onOpenNotepad={openNotepad}
               onLayoutModeChange={applyLayoutMode}
