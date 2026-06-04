@@ -164,10 +164,12 @@ async function readSseStream(response, callbacks = {}) {
         const event = JSON.parse(dataLine.slice(6));
         if (event.type === "status") callbacks.onStatus?.(event.status, event.message);
         if (event.type === "sources") callbacks.onSources?.(event.sources || event.citations || [], event.citations || event.sources || []);
+        if (event.type === "retrieval_diagnostics") callbacks.onDiagnostics?.(event.retrieval_diagnostics || event.diagnostics || null);
         if (event.type === "warning") callbacks.onWarning?.(event.warning || event.message || "");
         if (event.type === "suggested_prompts") callbacks.onSuggestedPrompts?.(event.suggested_prompts || []);
         if (event.type === "token") callbacks.onToken?.(event.content || "");
         if (event.type === "done") {
+          if (event.retrieval_diagnostics || event.diagnostics) callbacks.onDiagnostics?.(event.retrieval_diagnostics || event.diagnostics);
           if (event.warning) callbacks.onWarning?.(event.warning);
           if (event.suggested_prompts) callbacks.onSuggestedPrompts?.(event.suggested_prompts || []);
           callbacks.onDone?.(event);
