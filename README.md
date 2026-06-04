@@ -142,6 +142,7 @@ Frontend mặc định chạy tại `http://localhost:5173` và gọi backend qu
 - [Backend README](./backend/README.md)
 - [Frontend README](./frontend/README.md)
 - [API Contract](./docs/api_contract.md)
+- [Global Web Chat API Guide](./docs/global_web_chat_api_guide.md)
 - [Architecture](./docs/architecture.md)
 - [System Library Import Guide](./docs/system_library_import_guide.md)
 - SQL trong [`docs/sql`](./docs/sql)
