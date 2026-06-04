@@ -4,7 +4,7 @@ import AcademicCitationBadge from './AcademicCitationBadge';
 
 const QUICK_PROMPTS = ['Giải thích biểu đồ này', 'Trích xuất số liệu thành bảng', 'Chuyển công thức này sang LaTeX'];
 
-export default function AcademicChatPanel({ activeTab, onTabChange, messages, onSend, onReset, pendingImage, onClearImage, onAddToNotepad, onAddToContext, onOpenContexts, onCitationSelect, sending, errors = {}, webConfigured = true }) {
+export default function AcademicChatPanel({ activeTab, onTabChange, messages, onSend, onReset, pendingImage, onClearImage, onAddToNotepad, onAddToContext, onOpenContexts, onCitationSelect, onCollapse, sending, errors = {}, webConfigured = true }) {
   const [input, setInput] = useState('');
   const isWeb = activeTab === 'web';
   const submit = (event) => {
@@ -28,7 +28,7 @@ export default function AcademicChatPanel({ activeTab, onTabChange, messages, on
       </div>
       <div className="al-chat-tools">
         <span>{messages.length ? `${messages.length} tin nhắn` : 'Chưa có lịch sử chat'}</span>
-        <div className="al-chat-tool-actions"><button type="button" onClick={onOpenContexts}><BookOpen size={14} /> Web context</button><button type="button" onClick={onReset} disabled={!messages.length || sending}><RotateCcw size={14} /> Xóa lịch sử</button></div>
+        <div className="al-chat-tool-actions"><button type="button" onClick={onOpenContexts}><BookOpen size={14} /> Web context</button><button type="button" onClick={onReset} disabled={!messages.length || sending}><RotateCcw size={14} /> Xóa lịch sử</button><button type="button" onClick={onCollapse} title="Ẩn AI ChatBox"><X size={14} /> Ẩn</button></div>
       </div>
       {isWeb && <div className="al-web-note"><Globe2 size={14} /> {webConfigured ? 'Tìm kiếm Web độc lập (không dùng dữ liệu PDF). Câu trả lời thật cần citations/hyperlinks.' : 'Global Web Chat cần cấu hình Web Search API. UI không tạo kết quả giả.'}</div>}
       {errors.chat && <div className="al-feature-error"><AlertTriangle size={13} /> {errors.chat}</div>}

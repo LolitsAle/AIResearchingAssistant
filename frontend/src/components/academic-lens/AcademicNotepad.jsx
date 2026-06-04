@@ -26,7 +26,6 @@ const AcademicNotepad = forwardRef(function AcademicNotepad({ value, onChange, o
           <button type="button" onClick={() => onDockChange?.('bottom')} className={dock === 'bottom' ? 'active' : ''} title="Dock dưới"><PanelBottom size={15} /> Dưới</button>
           <button type="button" onClick={onSave} title="Lưu ngay"><Save size={15} /></button>
           <button type="button" onClick={exportMd}><Download size={15} /> .md</button>
-          <button type="button" disabled title="Export DOCX sẽ bật khi backend export DOCX được cấu hình cho Academic Lens.">.docx</button>
           <button type="button" onClick={onCollapse} title="Ẩn ghi chú"><X size={15} /> Ẩn</button>
         </div>
       </div>

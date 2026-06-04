@@ -38,11 +38,11 @@ export default function AcademicDocumentViewer({ document, snipping, onStopSnipp
   useEffect(() => {
     if (!activeCitation || !viewerRef.current) return;
     citationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (pdf && document?.preview_url && activeCitation.page_start) {
+    if (pdf && document?.preview_url && activeCitation.page_start && !previewText(document)) {
       const iframe = viewerRef.current.querySelector('iframe');
       if (iframe) iframe.src = `${document.preview_url}#page=${activeCitation.page_start}&toolbar=1&navpanes=1&scrollbar=1&view=FitH`;
     }
-  }, [activeCitation, document?.preview_url, pdf]);
+  }, [activeCitation, document, document?.preview_url, pdf]);
 
   const handleMouseUp = () => {
     const selected = window.getSelection?.();
@@ -63,19 +63,20 @@ export default function AcademicDocumentViewer({ document, snipping, onStopSnipp
           <h3>Chọn hoặc tải tài liệu để bắt đầu đọc với Kính lúp Học thuật.</h3>
           <p>Viewer hỗ trợ PDF bằng trình xem cơ bản của trình duyệt và DOCX/TXT/MD bằng nội dung text đã trích xuất.</p>
         </div>
-      ) : pdf && document.preview_url ? (
-        <>
-          <div className="al-viewer-warning"><AlertTriangle size={14} /> PDF hiện đang ở chế độ xem cơ bản (iframe). Highlight chính xác, crop pixel thật và nhảy tới đoạn nguồn có thể bị hạn chế cho tới khi bật PDF.js/canvas viewer.</div>
-          {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section}</span><p>{activeCitation.snippet}</p></aside>}
-          <iframe className="al-pdf-frame app-scrollbar" src={`${document.preview_url}#toolbar=1&navpanes=1&scrollbar=1&view=FitH`} title={document.title || 'PDF preview'} />
-        </>
       ) : previewText(document) ? (
         <article className="al-text-doc">
-          <span className="al-doc-kind">{String(document.file_type || 'DOC').toUpperCase()} preview từ nội dung đã trích xuất</span>
+          <span className="al-doc-kind">{pdf ? 'PDF text mode · selection/citation giống DOCX/MD' : `${String(document.file_type || 'DOC').toUpperCase()} preview từ nội dung đã trích xuất`}</span>
+          {pdf && document.preview_url && <a className="al-original-pdf-link" href={document.preview_url} target="_blank" rel="noreferrer">Mở bản PDF gốc trong tab mới</a>}
           <h1>{document.title || document.filename}</h1>
           {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section}</span><p>{activeCitation.snippet}</p></aside>}
           <pre>{previewText(document)}</pre>
         </article>
+      ) : pdf && document.preview_url ? (
+        <>
+          <div className="al-viewer-warning"><AlertTriangle size={14} /> PDF này chưa có text trích xuất nên đang dùng iframe fallback. Upload lại hoặc kiểm tra parser để bật PDF text mode cho selection/citation giống DOCX/MD.</div>
+          {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section}</span><p>{activeCitation.snippet}</p></aside>}
+          <iframe className="al-pdf-frame app-scrollbar" src={`${document.preview_url}#toolbar=1&navpanes=1&scrollbar=1&view=FitH`} title={document.title || 'PDF preview'} />
+        </>
       ) : (
         <div className="al-empty warning">
           <AlertTriangle size={38} />
