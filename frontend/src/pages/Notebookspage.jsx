@@ -177,6 +177,8 @@ const STYLES = `
     to { opacity: 1; transform: translateY(0) scale(1); }
   }
 `;
+const isNotebookStarred = (notebook = {}) => notebook.is_starred === true || notebook.is_starred === 'true' || notebook.is_starred === 1;
+
 
 export default function NotebooksPage() {
   const navigate = useNavigate();
@@ -241,7 +243,7 @@ export default function NotebooksPage() {
 
   const toggleNotebookStar = async (e, nb) => {
     e.stopPropagation();
-    const previous = Boolean(nb.is_starred);
+    const previous = isNotebookStarred(nb);
     setNotebooks((prev) => prev.map((item) => (item.notebook_id === nb.notebook_id ? { ...item, is_starred: !previous } : item)));
     try {
       const result = await api.updateNotebook(nb.notebook_id, { is_starred: !previous }, token);
@@ -254,8 +256,8 @@ export default function NotebooksPage() {
   };
 
   const sortedNotebooks = [...notebooks].sort((a, b) => {
-    if (Boolean(a.is_starred) !== Boolean(b.is_starred)) return a.is_starred ? -1 : 1;
-    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    if (isNotebookStarred(a) !== isNotebookStarred(b)) return isNotebookStarred(a) ? -1 : 1;
+    return new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0);
   });
 
   const openModal = () => { setNewName(''); setShowModal(true); };
@@ -313,12 +315,12 @@ export default function NotebooksPage() {
                   </div>
                   <div className="nb-card-actions">
                     <button
-                      className={`nb-action-btn ${nb.is_starred ? 'is-starred' : ''}`}
+                      className={`nb-action-btn ${isNotebookStarred(nb) ? 'is-starred' : ''}`}
                       onClick={(e) => toggleNotebookStar(e, nb)}
-                      aria-label={nb.is_starred ? 'Bỏ đánh dấu notebook quan trọng' : 'Đánh dấu notebook quan trọng'}
-                      title={nb.is_starred ? 'Bỏ đánh dấu quan trọng' : 'Đánh dấu quan trọng'}
+                      aria-label={isNotebookStarred(nb) ? 'Bỏ đánh dấu notebook quan trọng' : 'Đánh dấu notebook quan trọng'}
+                      title={isNotebookStarred(nb) ? 'Bỏ đánh dấu quan trọng' : 'Đánh dấu quan trọng'}
                     >
-                      <span>{nb.is_starred ? '★' : '☆'}</span><span>{nb.is_starred ? 'Đã sao' : 'Sao'}</span>
+                      <span>{isNotebookStarred(nb) ? '★' : '☆'}</span><span>{isNotebookStarred(nb) ? 'Đã sao' : 'Sao'}</span>
                     </button>
                     <button
                       className="nb-action-btn nb-delete-btn"
