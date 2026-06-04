@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { AlertTriangle, Globe2, Image, NotebookPen, PlusCircle, RotateCcw, Send, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, BookOpen, Globe2, Image, NotebookPen, PlusCircle, RotateCcw, Send, Sparkles, X } from 'lucide-react';
+import AcademicCitationBadge from './AcademicCitationBadge';
 
 const QUICK_PROMPTS = ['Giải thích biểu đồ này', 'Trích xuất số liệu thành bảng', 'Chuyển công thức này sang LaTeX'];
 
-export default function AcademicChatPanel({ activeTab, onTabChange, messages, onSend, onReset, pendingImage, onClearImage, onAddToNotepad, onAddToContext, sending }) {
+export default function AcademicChatPanel({ activeTab, onTabChange, messages, onSend, onReset, pendingImage, onClearImage, onAddToNotepad, onAddToContext, onOpenContexts, onCitationSelect, sending, errors = {}, webConfigured = true }) {
   const [input, setInput] = useState('');
   const isWeb = activeTab === 'web';
   const submit = (event) => {
@@ -26,18 +27,23 @@ export default function AcademicChatPanel({ activeTab, onTabChange, messages, on
       </div>
       <div className="al-chat-tools">
         <span>{messages.length ? `${messages.length} tin nhắn` : 'Chưa có lịch sử chat'}</span>
-        <button type="button" onClick={onReset} disabled={!messages.length || sending}><RotateCcw size={14} /> Xóa lịch sử</button>
+        <div className="al-chat-tool-actions"><button type="button" onClick={onOpenContexts}><BookOpen size={14} /> Web context</button><button type="button" onClick={onReset} disabled={!messages.length || sending}><RotateCcw size={14} /> Xóa lịch sử</button></div>
       </div>
-      {isWeb && <div className="al-web-note"><Globe2 size={14} /> Tìm kiếm Web độc lập (không dùng dữ liệu PDF). Câu trả lời thật cần citations/hyperlinks.</div>}
+      {isWeb && <div className="al-web-note"><Globe2 size={14} /> {webConfigured ? 'Tìm kiếm Web độc lập (không dùng dữ liệu PDF). Câu trả lời thật cần citations/hyperlinks.' : 'Global Web Chat cần cấu hình Web Search API. UI không tạo kết quả giả.'}</div>}
+      {errors.chat && <div className="al-feature-error"><AlertTriangle size={13} /> {errors.chat}</div>}
       <div className="al-chat-log app-scrollbar">
         {!messages.length ? <p className="al-muted">{isWeb ? 'Tìm kiếm Web độc lập (Không dùng dữ liệu PDF)...' : 'Hỏi AI dựa trên tài liệu đang đọc...'}</p> : messages.map((msg, index) => (
           <div key={index} className={`al-msg ${msg.role} ${msg.warning ? 'warning' : ''}`}>
             <p>{msg.content}</p>
+            {msg.used_web_context && <span className="al-web-used"><Globe2 size={13} /> Câu trả lời có sử dụng ngữ cảnh web bổ sung.</span>}
+            {Array.isArray(msg.citations) && msg.citations.length > 0 && (
+              <div className="al-citations-row">{msg.citations.map((citation, citationIndex) => <AcademicCitationBadge key={`${citation.chunk_id || citationIndex}-${citationIndex}`} citation={citation} index={citationIndex} onSelect={onCitationSelect} />)}</div>
+            )}
             {msg.warning && <span><AlertTriangle size={13} /> {msg.warning}</span>}
             {msg.role === 'assistant' && (
               <div className="al-msg-actions">
                 <button type="button" onClick={() => onAddToNotepad(msg.content)}><NotebookPen size={13} /> Add to Notepad</button>
-                {msg.mode === 'web' && <button type="button" onClick={() => onAddToContext(msg)}><PlusCircle size={13} /> Thêm vào Bối cảnh</button>}
+                {msg.mode === 'web' && <button type="button" onClick={() => onAddToContext(msg)} disabled={!msg.citations?.length}><PlusCircle size={13} /> Thêm vào Bối cảnh</button>}
               </div>
             )}
           </div>
@@ -54,7 +60,7 @@ export default function AcademicChatPanel({ activeTab, onTabChange, messages, on
           </div>
         )}
         <textarea className="app-scrollbar" rows={3} value={input} onChange={(event) => setInput(event.target.value)} placeholder={isWeb ? 'Tìm kiếm Web độc lập (Không dùng dữ liệu PDF)...' : 'Hỏi AI dựa trên tài liệu đang đọc...'} />
-        <button type="submit" disabled={sending || Boolean(pendingImage?.error)}><Send size={16} /> Gửi</button>
+        <button type="submit" disabled={sending || Boolean(pendingImage?.error) || (isWeb && !webConfigured)}><Send size={16} /> Gửi</button>
       </form>
     </aside>
   );

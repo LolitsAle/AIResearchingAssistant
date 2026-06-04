@@ -665,14 +665,59 @@ export const api = {
     );
   },
 
+  getAcademicLensWebContexts: (params = {}, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/academic-lens/web-contexts", { params, headers: authHeader(token) })
+    ),
+
   addAcademicLensWebContext: (payload, token) =>
     unwrapRequest(() =>
-      axiosInstance.post("/api/academic-lens/add-web-context", payload, { headers: authHeader(token) })
+      axiosInstance.post("/api/academic-lens/web-contexts", payload, { headers: authHeader(token) })
+    ),
+
+  updateAcademicLensWebContext: (contextId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.patch(`/api/academic-lens/web-contexts/${contextId}`, payload, { headers: authHeader(token) })
+    ),
+
+  deleteAcademicLensWebContext: (contextId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/academic-lens/web-contexts/${contextId}`, { headers: authHeader(token) })
+    ),
+
+  getAcademicLensNotepad: (params = {}, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/academic-lens/notes", { params, headers: authHeader(token) })
     ),
 
   saveAcademicLensNotepad: (payload, token) =>
     unwrapRequest(() =>
-      axiosInstance.put("/api/academic-lens/notepad", payload, { headers: authHeader(token) })
+      axiosInstance.put("/api/academic-lens/notes", payload, { headers: authHeader(token) })
+    ),
+
+  createAcademicLensSession: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/academic-lens/sessions", payload, { headers: authHeader(token) })
+    ),
+
+  listAcademicLensSessions: (params = {}, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/academic-lens/sessions", { params, headers: authHeader(token) })
+    ),
+
+  getAcademicLensSession: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/academic-lens/sessions/${sessionId}`, { headers: authHeader(token) })
+    ),
+
+  addAcademicLensSessionMessage: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/academic-lens/sessions/${sessionId}/messages`, payload, { headers: authHeader(token) })
+    ),
+
+  clearAcademicLensSessionMessages: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/academic-lens/sessions/${sessionId}/messages`, { headers: authHeader(token) })
     ),
 
   clearCrossAnalysisChat: (payload, token) =>

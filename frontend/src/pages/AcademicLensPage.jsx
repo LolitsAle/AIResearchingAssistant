@@ -4,6 +4,7 @@ import AcademicChatPanel from '../components/academic-lens/AcademicChatPanel';
 import AcademicDocumentViewer from '../components/academic-lens/AcademicDocumentViewer';
 import AcademicNotepad from '../components/academic-lens/AcademicNotepad';
 import DocumentToolbar from '../components/academic-lens/DocumentToolbar';
+import WebContextDrawer from '../components/academic-lens/WebContextDrawer';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 
@@ -53,6 +54,7 @@ const STYLES = `
   .al-chat.is-web { border-color:rgba(129,196,255,.2); background:rgba(80,130,180,.055); }
   .al-chat-tabs { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:12px; border-bottom:1px solid rgba(255,255,255,.08); }
   .al-chat-tools { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 12px; color:#8e8374; font-size:12px; border-bottom:1px solid rgba(255,255,255,.06); }
+  .al-chat-tool-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
   .al-chat-tools button { border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.045); color:#d8caa8; border-radius:11px; padding:7px 9px; display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
   .al-chat-tabs button.active { color:#18130d; background:linear-gradient(135deg,#d4b66f,#8a6a30); font-weight:900; }
   .al-web-note { margin:10px 12px 0; border:1px solid rgba(129,196,255,.2); background:rgba(129,196,255,.08); color:#cfe9ff; border-radius:14px; padding:10px; display:flex; gap:7px; align-items:center; font-size:12px; }
@@ -90,6 +92,30 @@ const STYLES = `
   .al-library-list { display:grid; gap:10px; margin-top:12px; }
   .al-library-doc { text-align:left !important; display:block !important; }
   .al-warning { display:flex; gap:8px; align-items:flex-start; color:#f0b5aa; border:1px solid rgba(224,120,120,.24); background:rgba(224,120,120,.08); border-radius:15px; padding:10px; margin-top:10px; }
+
+  .al-feature-error, .al-viewer-warning, .al-temp-warning { display:flex; gap:7px; align-items:flex-start; margin:10px 12px; border:1px solid rgba(224,120,120,.24); background:rgba(224,120,120,.08); color:#f0b5aa; border-radius:14px; padding:9px; font-size:12px; line-height:1.45; }
+  .al-temp-warning { position:sticky; bottom:10px; z-index:5; background:rgba(49,31,21,.95); }
+  .al-source-preview { margin:12px; border:1px solid rgba(196,164,100,.24); background:rgba(196,164,100,.08); border-radius:16px; padding:12px; color:#ded4c4; }
+  .al-source-preview strong, .al-source-preview span { display:block; color:#f2d48b; margin-bottom:5px; }
+  .al-source-preview p { margin:0; line-height:1.55; }
+  .al-citations-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .al-citation-wrap { position:relative; display:inline-flex !important; margin:0 !important; color:inherit !important; }
+  .al-citation-badge { border:1px solid rgba(196,164,100,.32); background:rgba(196,164,100,.12); color:#f2d48b; border-radius:999px; padding:3px 8px; cursor:pointer; font-weight:900; }
+  .al-citation-popover { position:absolute; z-index:150; left:0; top:28px; width:min(330px,78vw); display:grid !important; gap:5px !important; border:1px solid rgba(196,164,100,.28); background:#201810; box-shadow:0 18px 60px rgba(0,0,0,.55); border-radius:14px; padding:10px; color:#ded4c4 !important; }
+  .al-citation-popover strong { color:#f3ebdc; }
+  .al-citation-popover em, .al-citation-popover small { color:#b8ab99; font-style:normal; }
+  .al-web-used { color:#cfe9ff !important; }
+  .al-context-backdrop { position:fixed; inset:0; z-index:160; background:rgba(0,0,0,.58); display:flex; justify-content:flex-end; }
+  .al-context-drawer { width:min(430px,100%); height:100%; overflow:auto; background:#17130e; border-left:1px solid rgba(255,255,255,.1); padding:14px; }
+  .al-context-head, .al-context-actions, .al-context-title { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .al-context-head { margin-bottom:12px; }
+  .al-context-head span { display:block; color:#8e8374; font-size:12px; margin-top:3px; }
+  .al-context-head button, .al-context-actions button { border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.055); color:#d8caa8; border-radius:11px; padding:7px 9px; display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
+  .al-context-list { display:grid; gap:10px; }
+  .al-context-list article { border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.04); border-radius:15px; padding:11px; }
+  .al-context-list article.is-disabled { opacity:.58; }
+  .al-context-list p { color:#ded4c4; font-size:13px; line-height:1.55; max-height:110px; overflow:auto; }
+  .al-context-list small { color:#8e8374; }
   @media (max-width:1050px) { .al-workspace { grid-template-columns:1fr; } .al-main, .al-chat { height:auto; min-height:520px; } .al-viewer { max-height:72vh; } }
   @media (max-width:720px) { .al-toolbar { align-items:flex-start; flex-direction:column; } .al-toolbar-actions { justify-content:flex-start; } }
 `;
@@ -134,9 +160,16 @@ export default function AcademicLensPage() {
   const [messages, setMessages] = useState(Array.isArray(savedSession.messages) ? savedSession.messages : []);
   const [snipping, setSnipping] = useState(false);
   const [pendingImage, setPendingImage] = useState(null);
-  const [loading, setLoading] = useState('');
-  const [error, setError] = useState('');
+  const [loading, setLoading] = useState({ uploading: false, previewLoading: false, chatSending: false, webSearching: false, visionAnalyzing: false, savingNote: false, libraryLoading: false, contextLoading: false, sessionLoading: false });
+  const [errors, setErrors] = useState({});
   const [webContexts, setWebContexts] = useState(Array.isArray(savedSession.webContexts) ? savedSession.webContexts : []);
+  const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
+  const [contextStorage, setContextStorage] = useState('database');
+  const [noteSaveStatus, setNoteSaveStatus] = useState('idle');
+  const [noteStorage, setNoteStorage] = useState('database');
+  const [activeCitation, setActiveCitation] = useState(null);
+  const [sessionId, setSessionId] = useState(savedSession.sessionId || null);
+  const [webConfigured, setWebConfigured] = useState(true);
 
   const docKey = useMemo(() => document?.id ? `academic-lens-note:${document.source_type}:${document.id}` : 'academic-lens-note:draft', [document]);
 
@@ -145,27 +178,57 @@ export default function AcademicLensPage() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(ACADEMIC_LENS_SESSION_KEY, JSON.stringify({ document, activeTab, messages, webContexts }));
-  }, [document, activeTab, messages, webContexts]);
+    localStorage.setItem(ACADEMIC_LENS_SESSION_KEY, JSON.stringify({ document, activeTab, messages, webContexts, sessionId }));
+  }, [document, activeTab, messages, webContexts, sessionId]);
 
   const selectDocument = (nextDocument) => {
     setDocument(nextDocument);
     setMessages([]);
     setWebContexts([]);
+    setSessionId(null);
+    setActiveCitation(null);
     setPendingImage(null);
     setActiveTab('document');
   };
 
   useEffect(() => {
+    let cancelled = false;
     setNotepad(localStorage.getItem(docKey) || '');
-    if (document?.source_type === 'system_library') {
-      api.getAcademicLensDocumentPreview(document.id, token).then((data) => setDocument((current) => ({ ...(current || document), ...(data || {}) }))).catch(() => {});
+    if (!document?.id) return () => { cancelled = true; };
+    setLoading((current) => ({ ...current, previewLoading: document.source_type === 'system_library', sessionLoading: true, contextLoading: true }));
+    api.getAcademicLensNotepad({ document_id: document.id, session_id: sessionId || undefined }, token)
+      .then((data) => { if (!cancelled) { setNotepad(data?.content ?? localStorage.getItem(docKey) ?? ''); setNoteStorage(data?.storage || 'database'); } })
+      .catch(() => { if (!cancelled) setNoteStorage('memory_fallback'); });
+    api.listAcademicLensSessions({ document_id: document.id }, token)
+      .then(async (data) => {
+        if (cancelled) return;
+        const existing = data?.sessions?.[0];
+        if (existing) {
+          setSessionId(existing.id);
+          const sessionData = await api.getAcademicLensSession(existing.id, token);
+          if (!cancelled) setMessages(sessionData?.messages || []);
+        } else {
+          const created = await api.createAcademicLensSession({ document_id: document.id, title: document.title || document.filename || 'Academic Lens session' }, token);
+          if (!cancelled) setSessionId(created?.session?.id || null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading((current) => ({ ...current, sessionLoading: false })); });
+    api.getAcademicLensWebContexts({ document_id: document.id }, token)
+      .then((data) => { if (!cancelled) { setWebContexts(data?.contexts || []); setContextStorage(data?.storage || 'database'); } })
+      .catch((err) => { if (!cancelled) setErrors((current) => ({ ...current, context: err.message || 'Không thể tải web context.' })); })
+      .finally(() => { if (!cancelled) setLoading((current) => ({ ...current, contextLoading: false })); });
+    if (document.source_type === 'system_library') {
+      api.getAcademicLensDocumentPreview(document.id, token).then((data) => { if (!cancelled) setDocument((current) => ({ ...(current || document), ...(data || {}) })); }).catch((err) => setErrors((current) => ({ ...current, preview: err.message || 'Không thể tải preview.' }))).finally(() => { if (!cancelled) setLoading((current) => ({ ...current, previewLoading: false })); });
+    } else {
+      setLoading((current) => ({ ...current, previewLoading: false }));
     }
+    return () => { cancelled = true; };
   }, [docKey, document?.id, document?.source_type, token]);
 
   const uploadDocument = async (file) => {
-    setLoading('upload');
-    setError('');
+    setLoading((current) => ({ ...current, uploading: true }));
+    setErrors((current) => ({ ...current, upload: '' }));
     let previewUrl = '';
     try {
       previewUrl = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') ? URL.createObjectURL(file) : '';
@@ -173,40 +236,67 @@ export default function AcademicLensPage() {
       selectDocument({ ...data, preview_url: previewUrl });
     } catch (err) {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setError(err.message || 'Không thể upload tài liệu.');
+      setErrors((current) => ({ ...current, upload: err.message || 'Không thể upload tài liệu.' }));
     } finally {
-      setLoading('');
+      setLoading((current) => ({ ...current, uploading: false }));
     }
   };
 
   const saveNotepad = async () => {
     localStorage.setItem(docKey, notepad);
-    try { await api.saveAcademicLensNotepad({ document_id: document?.id || 'draft', content: notepad }, token); } catch {}
+    setNoteSaveStatus('saving');
+    setLoading((current) => ({ ...current, savingNote: true }));
+    try {
+      const data = await api.saveAcademicLensNotepad({ document_id: document?.id || 'draft', session_id: sessionId, content: notepad }, token);
+      setNoteStorage(data?.storage || 'database');
+      setNoteSaveStatus(data?.storage === 'memory_fallback' ? 'error' : 'saved');
+    } catch (err) {
+      setNoteSaveStatus('error');
+      setErrors((current) => ({ ...current, note: err.message || 'Lỗi lưu notepad.' }));
+    } finally {
+      setLoading((current) => ({ ...current, savingNote: false }));
+    }
   };
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (document?.id || notepad) saveNotepad();
+    }, 1400);
+    return () => clearTimeout(timeout);
+  }, [notepad, document?.id, sessionId]);
 
   const sendChat = async ({ message, tab }) => {
     const mode = tab || activeTab;
     const userMessage = { role: 'user', content: pendingImage ? `${message}\n[Đính kèm ảnh vùng chọn]` : message, mode };
     setMessages((current) => [...current, userMessage]);
-    setLoading('chat');
+    setLoading((current) => ({ ...current, chatSending: mode === 'document', webSearching: mode === 'web', visionAnalyzing: Boolean(pendingImage) }));
+    setErrors((current) => ({ ...current, chat: '' }));
     try {
       if (pendingImage) {
         const data = await api.visionAcademicLensChat({ image_data_url: pendingImage.dataUrl, prompt: message, document_id: document?.id }, token);
-        setMessages((current) => [...current, { role: 'assistant', content: data?.answer || 'Không có phản hồi từ Vision API.', mode: 'vision' }]);
+        const assistant = { role: 'assistant', content: data?.answer || 'Không có phản hồi từ Vision API.', mode: 'vision', citations: data?.citations || [] };
+        setMessages((current) => [...current, assistant]);
+        if (sessionId) { await api.addAcademicLensSessionMessage(sessionId, userMessage, token); await api.addAcademicLensSessionMessage(sessionId, assistant, token); }
       } else if (mode === 'web') {
         const data = await api.webAcademicLensChat({ message }, token);
-        setMessages((current) => [...current, { role: 'assistant', content: data?.answer || 'Không có phản hồi.', mode: 'web', citations: data?.citations || [] }]);
+        const assistant = { role: 'assistant', content: data?.answer || 'Không có phản hồi.', mode: 'web', citations: data?.citations || [] };
+        setMessages((current) => [...current, assistant]);
+        if (sessionId) { await api.addAcademicLensSessionMessage(sessionId, userMessage, token); await api.addAcademicLensSessionMessage(sessionId, assistant, token); }
       } else {
-        const data = await api.documentAcademicLensChat({ document: document ? { id: document.id, source_type: document.source_type, title: document.title, filename: document.filename, file_type: document.file_type } : null, message, chat_history: messages, extra_contexts: webContexts }, token);
-        setMessages((current) => [...current, { role: 'assistant', content: data?.answer || 'Không có phản hồi.', mode: 'document' }]);
+        const data = await api.documentAcademicLensChat({ document: document ? { id: document.id, source_type: document.source_type, title: document.title, filename: document.filename, file_type: document.file_type } : null, message, chat_history: messages, enabled_web_context_ids: webContexts.filter((ctx) => ctx.enabled !== false).map((ctx) => ctx.id).filter(Boolean), session_id: sessionId }, token);
+        const assistant = { role: 'assistant', content: data?.answer || 'Không có phản hồi.', mode: 'document', citations: data?.citations || [], used_web_context: data?.used_web_context };
+        setMessages((current) => [...current, assistant]);
+        if (sessionId) { await api.addAcademicLensSessionMessage(sessionId, userMessage, token); await api.addAcademicLensSessionMessage(sessionId, assistant, token); }
         setPendingImage(null);
         return;
       }
     } catch (err) {
-      setMessages((current) => [...current, { role: 'assistant', content: err.message || 'Tính năng này chưa sẵn sàng.', mode, warning: mode === 'web' ? 'Câu trả lời này chưa có nguồn kiểm chứng.' : '' }]);
+      if (mode === 'web' && (err.code === 'WEB_SEARCH_NOT_CONFIGURED' || err.status === 503)) setWebConfigured(false);
+      setErrors((current) => ({ ...current, chat: err.message || 'Tính năng này chưa sẵn sàng.' }));
+      setMessages((current) => [...current, { role: 'assistant', content: err.message || 'Tính năng này chưa sẵn sàng.', mode, warning: mode === 'web' ? 'Global Web Chat chưa cấu hình; không tạo web result giả.' : '' }]);
     } finally {
       setPendingImage(null);
-      setLoading('');
+      setLoading((current) => ({ ...current, chatSending: false, webSearching: false, visionAnalyzing: false }));
     }
   };
 
@@ -225,6 +315,7 @@ export default function AcademicLensPage() {
     if (!messages.length) return;
     if (!window.confirm('Xóa lịch sử chat hiện tại? Tài liệu và Notepad vẫn được giữ nguyên.')) return;
     setMessages([]);
+    if (sessionId) api.clearAcademicLensSessionMessages(sessionId, token).catch(() => {});
   };
 
   const scrollToNotepad = () => {
@@ -232,9 +323,18 @@ export default function AcademicLensPage() {
   };
 
   const addToContext = async (message) => {
-    const context = { content: message.content, citations: message.citations || [] };
-    setWebContexts((current) => [...current, context]);
-    try { await api.addAcademicLensWebContext(context, token); } catch {}
+    const firstCitation = message.citations?.[0] || {};
+    const context = { title: firstCitation.title || 'Web context', url: firstCitation.url, content: message.content, citations: message.citations || [], session_id: sessionId, document_id: document?.id, enabled: true };
+    setLoading((current) => ({ ...current, contextLoading: true }));
+    try {
+      const data = await api.addAcademicLensWebContext(context, token);
+      setWebContexts((current) => [data?.context || context, ...current]);
+      setContextStorage(data?.storage || 'database');
+    } catch (err) {
+      setErrors((current) => ({ ...current, context: err.message || 'Không thể thêm web context.' }));
+    } finally {
+      setLoading((current) => ({ ...current, contextLoading: false }));
+    }
   };
 
   return (
@@ -245,16 +345,18 @@ export default function AcademicLensPage() {
         <h1>Kính lúp Học thuật</h1>
         <p>Đọc, đánh dấu, chụp vùng nội dung và hỏi AI trực tiếp trên tài liệu học thuật.</p>
       </section>
-      {error && <div className="al-warning"><AlertTriangle size={16} /> {error}</div>}
+      {errors.upload && <div className="al-warning"><AlertTriangle size={16} /> {errors.upload}</div>}
+      {errors.preview && <div className="al-warning"><AlertTriangle size={16} /> {errors.preview}</div>}
       <input ref={fileInputRef} type="file" hidden accept=".pdf,.docx,.txt,.md" onChange={(event) => event.target.files?.[0] && uploadDocument(event.target.files[0])} />
       <div className="al-workspace">
         <main className="al-main">
-          <DocumentToolbar title={document?.title || document?.filename} uploading={loading === 'upload'} onUploadClick={() => fileInputRef.current?.click()} onOpenLibrary={() => setLibraryOpen(true)} onToggleSnip={() => setSnipping(true)} onScrollToNotepad={scrollToNotepad} />
-          <AcademicDocumentViewer document={document} snipping={snipping} onStopSnipping={() => setSnipping(false)} onSnip={setPendingImage} onSelectionAction={handleSelectionAction} />
+          <DocumentToolbar title={document?.title || document?.filename} uploading={loading.uploading} onUploadClick={() => fileInputRef.current?.click()} onOpenLibrary={() => setLibraryOpen(true)} onToggleSnip={() => setSnipping(true)} onScrollToNotepad={scrollToNotepad} />
+          <AcademicDocumentViewer document={document} snipping={snipping} onStopSnipping={() => setSnipping(false)} onSnip={setPendingImage} onSelectionAction={handleSelectionAction} activeCitation={activeCitation} />
         </main>
-        <AcademicChatPanel activeTab={activeTab} onTabChange={setActiveTab} messages={messages} onSend={sendChat} onReset={resetChatHistory} pendingImage={pendingImage} onClearImage={() => setPendingImage(null)} onAddToNotepad={appendToNotepad} onAddToContext={addToContext} sending={loading === 'chat'} />
-        <AcademicNotepad ref={notepadRef} value={notepad} onChange={setNotepad} onSave={saveNotepad} />
+        <AcademicChatPanel activeTab={activeTab} onTabChange={setActiveTab} messages={messages} onSend={sendChat} onReset={resetChatHistory} pendingImage={pendingImage} onClearImage={() => setPendingImage(null)} onAddToNotepad={appendToNotepad} onAddToContext={addToContext} sending={loading.chatSending || loading.webSearching || loading.visionAnalyzing} errors={errors} webConfigured={webConfigured} onOpenContexts={() => setContextDrawerOpen(true)} onCitationSelect={setActiveCitation} />
+        <AcademicNotepad ref={notepadRef} value={notepad} onChange={(value) => { setNoteSaveStatus('idle'); setNotepad(value); }} onSave={saveNotepad} saveStatus={noteSaveStatus} storage={noteStorage} />
       </div>
+      <WebContextDrawer open={contextDrawerOpen} contexts={webContexts} loading={loading.contextLoading} error={errors.context} storage={contextStorage} onClose={() => setContextDrawerOpen(false)} onToggle={async (ctx, enabled) => { setWebContexts((current) => current.map((item) => item.id === ctx.id ? { ...item, enabled } : item)); if (ctx.id) await api.updateAcademicLensWebContext(ctx.id, { enabled }, token).catch(() => setContextStorage('memory_fallback')); }} onDelete={async (ctx) => { setWebContexts((current) => current.filter((item) => item !== ctx && item.id !== ctx.id)); if (ctx.id) await api.deleteAcademicLensWebContext(ctx.id, token).catch(() => setContextStorage('memory_fallback')); }} />
       <LibraryModal open={libraryOpen} onClose={() => setLibraryOpen(false)} onSelect={selectDocument} />
     </div>
   );
