@@ -624,11 +624,10 @@ async def link_system_document_to_notebook(
     }
     try:
         insert_resp = supabase.table("documents").insert(doc_payload).execute()
-    except Exception:
-        doc_payload.pop("processing_status", None)
-        doc_payload.pop("is_vector_ready", None)
-        doc_payload.pop("source_type", None)
-        doc_payload.pop("source_id", None)
+    except Exception as exc:
+        logger.warning("Insert linked system document with extended columns failed, retrying with legacy payload: %s", exc)
+        for optional_key in ("file_type", "status", "processing_status", "is_vector_ready", "source_type", "source_id"):
+            doc_payload.pop(optional_key, None)
         insert_resp = supabase.table("documents").insert(doc_payload).execute()
     inserted, insert_error = _supabase_response_data(insert_resp)
     if insert_error or not inserted:

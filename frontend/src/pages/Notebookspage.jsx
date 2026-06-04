@@ -135,13 +135,13 @@ const STYLES = `
   .nb-card-meta { font-size: 12px; color: #5a5040; }
   .nb-card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
   .nb-action-btn {
-    width: 32px; height: 32px; border-radius: 8px; border: none;
-    background: transparent; cursor: pointer; color: #4a4030;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 15px; transition: color 0.2s, background 0.2s;
+    min-width: 32px; height: 32px; border-radius: 999px; border: 1px solid transparent;
+    background: transparent; cursor: pointer; color: #6a6050;
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 0 9px; font-size: 13px; transition: color 0.2s, background 0.2s, border-color 0.2s;
   }
   .nb-action-btn:hover { color: #c4a464; background: rgba(196,164,100,0.08); }
-  .nb-action-btn.is-starred { color: #f3c85f; background: rgba(243,200,95,0.1); }
+  .nb-action-btn.is-starred { color: #1a1510; background: linear-gradient(135deg,#f3c85f,#c4a464); border-color: rgba(243,200,95,0.55); font-weight: 700; }
   .nb-delete-btn:hover { color: #e07878; background: rgba(200,80,80,0.08); }
   .nb-arrow { color: #3a3020; font-size: 18px; }
 
@@ -318,7 +318,7 @@ export default function NotebooksPage() {
                       aria-label={nb.is_starred ? 'Bỏ đánh dấu notebook quan trọng' : 'Đánh dấu notebook quan trọng'}
                       title={nb.is_starred ? 'Bỏ đánh dấu quan trọng' : 'Đánh dấu quan trọng'}
                     >
-                      {nb.is_starred ? '★' : '☆'}
+                      <span>{nb.is_starred ? '★' : '☆'}</span><span>{nb.is_starred ? 'Đã sao' : 'Sao'}</span>
                     </button>
                     <button
                       className="nb-action-btn nb-delete-btn"
