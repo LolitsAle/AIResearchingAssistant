@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Download, FileText, Loader2, MessageCircle, NotebookPen, Scale, Search, Star, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Download, FileText, Loader2, Star, X } from "lucide-react";
 
 const formatDate = (value) => { if (!value) return "Chưa có thông tin"; try { return new Date(value).toLocaleString("vi-VN"); } catch { return "Chưa có thông tin"; } };
 const formatFileSize = (bytes) => { const size = Number(bytes); if (!Number.isFinite(size) || size <= 0) return "Chưa có thông tin"; const units = ["B", "KB", "MB", "GB"]; let value = size; let unitIndex = 0; while (value >= 1024 && unitIndex < units.length - 1) { value /= 1024; unitIndex += 1; } return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`; };
@@ -28,7 +28,7 @@ function DocumentRatingSection({ rating, onRate, loading, submitting, error }) {
 
 function DetailRow({ label, value }) { if (value === null || value === undefined || value === "") return null; return <div className="sl-modal__row"><span>{label}</span><strong>{value}</strong></div>; }
 
-export default function SystemDocumentDetailModal({ document, onClose, onDownload, downloading, rating, ratingLoading, ratingSubmitting, ratingError, onRate, onWorkflowAction }) {
+export default function SystemDocumentDetailModal({ document, onClose, onDownload, downloading, rating, ratingLoading, ratingSubmitting, ratingError, onRate }) {
   const [localDocument, setLocalDocument] = useState(document);
   const [activeTab, setActiveTab] = useState("overview");
   useEffect(() => { setLocalDocument(document); setActiveTab("overview"); }, [document]);
@@ -40,16 +40,8 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
   const reviewStatus = current.review_status || String(current.status || "published").toLowerCase();
   const metadataOnlyWarning = current.metadata_only || !current.full_text_indexed;
   const tabs = [
-    ["overview", "Overview"], ["preview", "Preview"], ["metadata", "Metadata"], ["reviews", "Reviews"], ["actions", "Actions"],
+    ["overview", "Overview"], ["preview", "Preview"], ["metadata", "Metadata"], ["reviews", "Reviews"],
   ];
-  const citation = useMemo(() => [current.authors?.join?.(", "), current.year, title, current.venue, current.doi].filter(Boolean).join(". "), [current, title]);
-  const workflow = (type) => {
-    if (metadataOnlyWarning && ["ask_ai", "add_notebook"].includes(type)) {
-      // eslint-disable-next-line no-alert
-      alert("Tài liệu này chưa có full text, AI chỉ có thể dùng metadata/tóm tắt, kết quả có thể hạn chế.");
-    }
-    onWorkflowAction?.(type, current);
-  };
 
   return <div className="sl-modal-overlay" role="presentation" onClick={onClose}>
     <section className="sl-modal" role="dialog" aria-modal="true" aria-label={`Chi tiết ${title}`} onClick={(event) => event.stopPropagation()}>
@@ -61,7 +53,6 @@ export default function SystemDocumentDetailModal({ document, onClose, onDownloa
         {activeTab === "preview" && <section className="sl-modal__section"><h3>Preview</h3>{metadataOnlyWarning ? <p className="sl-modal__muted">Tài liệu này hiện chỉ có metadata, chưa có full text để xem trước.</p> : <p>File đã được index. Bản preview inline chưa khả dụng trong phiên bản này; hãy dùng Download để xem file gốc.</p>}</section>}
         {activeTab === "metadata" && <section className="sl-modal__section"><h3>Metadata</h3><div className="sl-modal__grid"><DetailRow label="Tên file" value={current.filename || "Chưa có thông tin"} /><DetailRow label="Định dạng" value={current.file_type || current.mime_type || "Chưa có thông tin"} /><DetailRow label="Category" value={current.category || current.subject_area || "Chưa có thông tin"} /><DetailRow label="Nguồn" value={sourceLabel} /><DetailRow label="Trạng thái" value={statusLabels[reviewStatus] || reviewStatus} /><DetailRow label="Processing" value={current.processing_status || "Chưa có thông tin"} /><DetailRow label="Ngày đăng" value={formatDate(current.created_at)} /><DetailRow label="Ngày cập nhật" value={formatDate(current.updated_at)} /><DetailRow label="Người đăng" value={current.uploader_name || current.uploader?.name || "Hệ thống"} /><DetailRow label="Số trang" value={current.page_count ?? "Chưa có thông tin"} /><DetailRow label="Số từ" value={current.word_count ?? "Chưa có thông tin"} /><DetailRow label="Kích thước" value={formatFileSize(current.file_size)} /><DetailRow label="Authors" value={(current.authors || []).join(", ")} /><DetailRow label="Year" value={current.year} /><DetailRow label="Venue" value={current.venue} /><DetailRow label="DOI" value={current.doi || "Chưa có thông tin"} /><DetailRow label="URL" value={current.external_url || current.download_url || "Chưa có thông tin"} /></div></section>}
         {activeTab === "reviews" && <DocumentRatingSection rating={rating || current.rating || current} loading={ratingLoading} submitting={ratingSubmitting} error={ratingError} onRate={onRate} />}
-        {activeTab === "actions" && <section className="sl-modal__section"><h3>Đưa vào workflow AI</h3>{metadataOnlyWarning && <p className="sl-warning-text">Tài liệu metadata-only/chưa index: các workflow AI chỉ dùng metadata/tóm tắt.</p>}<div className="sl-workflow-actions"><button type="button" onClick={() => workflow("add_notebook")}><NotebookPen size={16} /> Thêm vào Notebook</button><button type="button" onClick={() => workflow("academic_lens")}><Search size={16} /> Mở trong Kính lúp Học thuật</button><button type="button" onClick={() => workflow("cross_analysis")}><Scale size={16} /> So sánh trong Cross-Analysis</button><button type="button" onClick={() => workflow("ask_ai")}><MessageCircle size={16} /> Hỏi AI về tài liệu này</button><button type="button" disabled title="Report issue sẽ được bổ sung ở P3">Report issue</button><button type="button" onClick={() => navigator.clipboard?.writeText(citation || current.doi || title)}>Copy citation / DOI</button></div></section>}
       </div>
       <footer className="sl-modal__footer"><button type="button" className="sl-download-btn" onClick={() => onDownload(current)} disabled={downloading || !current.downloadable}><Download size={16} /> {downloading ? "Đang tải tài liệu..." : "Download"}</button></footer>
     </section>

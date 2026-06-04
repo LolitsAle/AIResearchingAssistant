@@ -93,13 +93,13 @@ const STYLES = `
   .sl-card__flags .is-on { opacity: 1; color: #f0d089; }
   .sl-modal-overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 18px; background: rgba(0,0,0,.62); }
   .sl-tag-modal-overlay { z-index: 90; }
-  .sl-modal { width: min(760px, 100%); max-height: min(86vh, 820px); display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.12); border-radius: 26px; background: #18140f; color: #efe6d8; box-shadow: 0 30px 110px rgba(0,0,0,.55); position: relative; }
+  .sl-modal { width: min(760px, 100%); height: min(86vh, 820px); max-height: min(86vh, 820px); display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.12); border-radius: 26px; background: #18140f; color: #efe6d8; box-shadow: 0 30px 110px rgba(0,0,0,.55); position: relative; }
   .sl-modal__close { position: absolute; top: 14px; right: 14px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #efe6d8; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; display: flex; justify-content: center; align-items: center;}
   .sl-modal__header { display: flex; gap: 14px; padding: 24px 26px 12px; }
   .sl-modal__header p { margin: 0 0 4px; color: #d4b66f; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
   .sl-modal__header h2 { margin: 0; font-size: clamp(22px, 4vw, 34px); }
   .sl-modal__icon { flex: 0 0 46px; width: 46px; height: 46px; display: grid; place-items: center; border-radius: 16px; background: rgba(212,182,111,.14); color: #f0d089; }
-  .sl-modal__content { overflow: auto; padding: 8px 26px 18px; display: grid; gap: 16px; }
+  .sl-modal__content { flex: 1; min-height: 0; overflow: auto; padding: 8px 26px 18px; display: grid; align-content: start; gap: 16px; }
   .sl-tag-modal { width: min(720px, 100%); }
   .sl-tag-modal__search { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 16px; color: #d4b66f; background: rgba(0,0,0,.18); }
   .sl-tag-modal__search input { border: 0; background: transparent; padding: 0; }
@@ -174,10 +174,10 @@ const STYLES = `
   .sl-badge--source { background:rgba(96,165,250,.14); color:#bfdbfe; }
   .sl-badge--status { background:rgba(212,182,111,.14); color:#f2d48b; }
   .sl-badge.is-warning, .sl-badge--access.is-warning { background:rgba(251,191,36,.14); color:#fde68a; }
-  .sl-card__owner-actions, .sl-pagination, .sl-modal__tabs, .sl-workflow-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:12px; }
+  .sl-card__owner-actions, .sl-pagination, .sl-modal__tabs { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:12px; }
   .sl-card__owner-actions { border-top:1px solid rgba(255,255,255,.08); padding-top:12px; }
-  .sl-card__owner-actions button, .sl-modal__tabs button, .sl-workflow-actions button { border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:9px 12px; background:rgba(255,255,255,.045); color:#efe6d8; cursor:pointer; }
-  .sl-card__owner-actions button:disabled, .sl-workflow-actions button:disabled { opacity:.45; cursor:not-allowed; }
+  .sl-card__owner-actions button, .sl-modal__tabs button { border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:9px 12px; background:rgba(255,255,255,.045); color:#efe6d8; cursor:pointer; }
+  .sl-card__owner-actions button:disabled { opacity:.45; cursor:not-allowed; }
   .sl-modal__tabs { padding:0 26px 12px; border-bottom:1px solid rgba(255,255,255,.08); }
   .sl-modal__tabs button.is-active { background:#d4b66f; color:#18130d; font-weight:800; }
   .sl-my-dashboard { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:18px; }
@@ -594,13 +594,6 @@ export default function SystemLibraryPage() {
     }
   };
 
-  const handleWorkflowAction = (type, document) => {
-    const params = new URLSearchParams({ library_document_id: document.id });
-    if (type === "academic_lens") window.location.assign(`/academic-lens?${params.toString()}`);
-    else if (type === "cross_analysis") window.location.assign(`/cross-analysis?${params.toString()}`);
-    else if (type === "ask_ai") setNotice("Hỏi AI trực tiếp cần chọn notebook/chat đích; UI tạo session từ tài liệu sẽ bổ sung ở bước tiếp theo.");
-    else setNotice("Thêm vào Notebook cần chọn notebook đích; endpoint đã có nhưng UI chọn notebook sẽ bổ sung ở bước tiếp theo.");
-  };
 
   return (
     <div className="sl-page">
@@ -998,7 +991,6 @@ export default function SystemLibraryPage() {
         ratingSubmitting={ratingSubmitting}
         ratingError={ratingError}
         onRate={handleRateDocument}
-        onWorkflowAction={handleWorkflowAction}
       />
       <OpenAlexPaperDetailModal
         paper={selectedPaper}
