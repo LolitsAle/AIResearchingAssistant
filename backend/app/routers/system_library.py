@@ -4,7 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import RedirectResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_user
 from app.services.system_library_service import (
@@ -58,6 +58,21 @@ class SystemLibraryFilters(BaseModel):
     empirical_evidence: list[str] = Field(default_factory=list)
     outcome_stance: list[str] = Field(default_factory=list)
     hypothesis: str = ""
+
+
+    @field_validator("citation_count_min", "year_from", "year_to", mode="before")
+    @classmethod
+    def blank_string_to_none_for_optional_ints(cls, value):
+        if value == "" or value is None:
+            return None
+        return value
+
+    @field_validator("is_vector_ready", "downloadable", "has_doi", mode="before")
+    @classmethod
+    def blank_string_to_none_for_optional_bools(cls, value):
+        if value == "" or value is None:
+            return None
+        return value
 
 
 class SystemLibrarySearchRequest(BaseModel):
