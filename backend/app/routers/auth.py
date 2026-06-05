@@ -885,7 +885,7 @@ def _get_reset_auth_user(email: str) -> Any | None:
 
 def _require_valid_otp_format(otp: str) -> str:
     value = str(otp or "").strip()
-    if len(value) != 6 or not value.isdigit():
+    if len(value) != 4 or not value.isdigit():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
@@ -920,7 +920,7 @@ async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "code": "PASSWORD_RESET_OTP_PERSIST_FAILED",
-                "message": "Không thể tạo mã xác thực. Vui lòng kiểm tra migration password_reset_otps và thử lại sau.",
+                "message": "Không thể tạo mã xác thực. Vui lòng thử lại sau.",
             },
         ) from exc
 

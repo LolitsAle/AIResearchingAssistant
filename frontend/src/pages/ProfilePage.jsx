@@ -218,7 +218,7 @@ function Security({ profile, token, onUpdate, onSuccess, onError }) {
         <h2>Đặt lại mật khẩu qua email</h2>
         <label>Email nhận OTP<input type="email" value={reset.email} onChange={e=>setReset({...reset,email:e.target.value})} /></label>
         <button type="button" className="secondary" onClick={requestOtp}>Gửi mã OTP</button>
-        <label>OTP 4 số<input inputMode="numeric" pattern="\d{4}" maxLength={4} value={reset.otp} onChange={e=>setReset({...reset,otp:e.target.value.replace(/\D/g,'').slice(0,4)})} placeholder="••••" /></label>
+        <label>OTP 4 số<input inputMode="numeric" pattern="\d{4}" maxLength={4} value={reset.otp} onChange={e=>setReset({...reset,otp:e.target.value.replace(/\D/g,'').slice(0,4)})} placeholder="8888" /></label>
         <button type="button" className="secondary" onClick={verifyOtp} disabled={resetStep === 'email'}>Xác thực OTP</button>
         <form className="nested-form" onSubmit={confirmReset}>
           <label>Mật khẩu mới<input type="password" minLength={6} value={reset.new_password} onChange={e=>setReset({...reset,new_password:e.target.value})} required disabled={resetStep !== 'password'} /></label>
@@ -228,7 +228,7 @@ function Security({ profile, token, onUpdate, onSuccess, onError }) {
         <p className="muted">Reset mật khẩu không cần mật khẩu hiện tại và dùng được cho cả tài khoản đăng ký thường lẫn tài khoản Google.</p>
         <div className="divider" />
         <p>2FA email: <strong>{profile.email_2fa_enabled ? 'Đang bật' : 'Đang tắt'}</strong></p>
-        <p className="muted">Nếu chưa cấu hình SMTP, môi trường production sẽ báo rõ: Chưa cấu hình dịch vụ gửi email.</p>
+        <p className="muted">OTP gồm 4 số được gửi qua email. Môi trường develop có thể dùng mã test 8888.</p>
         <button className="secondary" onClick={toggle2fa}>{profile.email_2fa_enabled ? 'Tắt 2FA email' : 'Bật 2FA email'}</button>
       </div>
     </section>
