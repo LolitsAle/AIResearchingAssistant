@@ -15,6 +15,8 @@ const RIGHT_WIDTH_KEY = "notebookWorkspaceRightWidth";
 const RIGHT_TAB_KEY = "notebookWorkspaceRightTab";
 const LEFT_TAB_KEY = "notebookWorkspaceLeftTab";
 const LAST_SESSION_KEY = "researchWorkspace:lastActiveSessionId";
+const STREAM_TYPEWRITER_INTERVAL_MS = Math.max(0, Number(import.meta.env.VITE_STREAM_TYPEWRITER_INTERVAL_MS || 28));
+const STREAM_TYPEWRITER_CHARS_PER_TICK = Math.max(1, Number(import.meta.env.VITE_STREAM_TYPEWRITER_CHARS_PER_TICK || 3));
 
 const PROMPT_GROUPS = [
   { group: "Hiểu tài liệu", prompts: ["Tóm tắt ý chính của tài liệu đã chọn", "Liệt kê luận điểm chính kèm nguồn", "Giải thích thuật ngữ quan trọng"] },
@@ -34,6 +36,8 @@ function useStored(key, initial, parser = (value) => value) {
   useEffect(() => { localStorage.setItem(key, String(value)); }, [key, value]);
   return [value, setValue];
 }
+
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function normalizeDocument(doc = {}) {
   const id = String(doc.id || doc.doc_id || "");
@@ -482,12 +486,106 @@ export default function ResearchWorkspace() {
   const linkLibraryDocument = async (id) => { try { await api.linkSystemDocumentToNotebook(notebookId, id, token); setLibraryOpen(false); showToast("success", "Đã link tài liệu từ thư viện."); await loadDocuments(); } catch (err) { showToast("error", err.message || "Không thể link tài liệu."); } };
 
   const startChat = async ({ question, regenerateIndex = null }) => {
-    if (!question.trim() || loading) return; if (!activeSession) return showToast("error", "Hãy tạo hoặc mở phiên nghiên cứu trước."); if (!selectedDocumentIds.length) return showToast("error", "Chọn ít nhất một tài liệu.");
-    const controller = new AbortController(); requestRef.current = controller; const userMessage = regenerateIndex == null ? { id: crypto.randomUUID?.() || `${Date.now()}-user`, role: "user", content: question } : null; const assistantId = crypto.randomUUID?.() || `${Date.now()}-assistant`;
-    setInput(""); setLoading(true); setLoadingLabel("Đang truy xuất nguồn…"); setDiagnostics(null); setInvalidCitationCount(0); if (userMessage) setMessages((prev) => [...prev, userMessage]); else setMessages((prev) => prev.map((m, i) => i === regenerateIndex ? { ...m, content: "", citations: [], streaming: true } : m));
-    let full = ""; let streamCitations = []; let streamWarning = null; let streamDiagnostics = null; const history = messages.filter((m, i) => regenerateIndex == null || i < regenerateIndex).filter((m) => m.role !== "system").map(({ role, content }) => ({ role, content }));
-    try { await api.streamResearchQuery({ notebookId, question, chatHistory: history, selectedDocumentIds, researchSessionId: activeSession.id, citationThreshold: retrievalMode === "strict" ? 0.45 : 0 }, token, { onStatus: (_s, msg) => setLoadingLabel(msg || "Đang xử lý…"), onSources: (sources) => { streamCitations = normalizeCitations(sources); setCurrentCitations(streamCitations); setInvalidCitationCount(Math.max(0, (Array.isArray(sources) ? sources.length : 0) - streamCitations.length)); setRightTab("sources"); }, onDiagnostics: (diag) => { streamDiagnostics = diag; setDiagnostics(diag); }, onWarning: (warning) => { streamWarning = warning; }, onToken: (chunk) => { full += chunk; const partial = { id: assistantId, role: "assistant", content: full, citations: streamCitations, warning: streamWarning, retrieval_diagnostics: streamDiagnostics, streaming: true }; setMessages((prev) => regenerateIndex == null ? [...prev.filter((m) => m.id !== assistantId), partial] : prev.map((m, i) => i === regenerateIndex ? partial : m)); } }, { signal: controller.signal }); setLoadingLabel("Đang lưu phiên…"); const finalMsg = { id: assistantId, role: "assistant", content: full, citations: streamCitations, warning: streamWarning, retrieval_diagnostics: streamDiagnostics || buildDiagnostics(streamCitations) }; setMessages((prev) => regenerateIndex == null ? [...prev.filter((m) => m.id !== assistantId), finalMsg] : prev.map((m, i) => i === regenerateIndex ? finalMsg : m)); setDiagnostics(finalMsg.retrieval_diagnostics); setCurrentCitations(streamCitations); } catch (err) { showToast("error", err.message || "Không thể gọi RAG."); } finally { setLoading(false); setLoadingLabel(""); requestRef.current = null; }
+    if (!question.trim() || loading) return;
+    if (!activeSession) return showToast("error", "Hãy tạo hoặc mở phiên nghiên cứu trước.");
+    if (!selectedDocumentIds.length) return showToast("error", "Chọn ít nhất một tài liệu.");
+
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const userMessage = regenerateIndex == null ? { id: crypto.randomUUID?.() || `${Date.now()}-user`, role: "user", content: question } : null;
+    const assistantId = crypto.randomUUID?.() || `${Date.now()}-assistant`;
+
+    setInput("");
+    setLoading(true);
+    setLoadingLabel("Đang truy xuất nguồn…");
+    setDiagnostics(null);
+    setInvalidCitationCount(0);
+    if (userMessage) setMessages((prev) => [...prev, userMessage]);
+    else setMessages((prev) => prev.map((m, i) => i === regenerateIndex ? { ...m, content: "", citations: [], streaming: true } : m));
+
+    let full = "";
+    let displayed = "";
+    let streamCitations = [];
+    let streamWarning = null;
+    let streamDiagnostics = null;
+    let renderCancelled = false;
+    let renderChain = Promise.resolve();
+    const history = messages
+      .filter((m, i) => regenerateIndex == null || i < regenerateIndex)
+      .filter((m) => m.role !== "system")
+      .map(({ role, content }) => ({ role, content }));
+
+    const updateAssistantMessage = (content, streaming = true) => {
+      const partial = {
+        id: assistantId,
+        role: "assistant",
+        content,
+        citations: streamCitations,
+        warning: streamWarning,
+        retrieval_diagnostics: streamDiagnostics,
+        streaming,
+      };
+      setMessages((prev) => regenerateIndex == null
+        ? [...prev.filter((m) => m.id !== assistantId), partial]
+        : prev.map((m, i) => i === regenerateIndex ? partial : m));
+    };
+
+    const enqueueTypewriterChunk = (chunk) => {
+      full += chunk;
+      renderChain = renderChain.then(async () => {
+        for (let index = 0; index < chunk.length; index += STREAM_TYPEWRITER_CHARS_PER_TICK) {
+          if (renderCancelled || controller.signal.aborted) return;
+          displayed += chunk.slice(index, index + STREAM_TYPEWRITER_CHARS_PER_TICK);
+          updateAssistantMessage(displayed, true);
+          if (STREAM_TYPEWRITER_INTERVAL_MS > 0) await sleep(STREAM_TYPEWRITER_INTERVAL_MS);
+        }
+      });
+    };
+
+    try {
+      await api.streamResearchQuery(
+        { notebookId, question, chatHistory: history, selectedDocumentIds, researchSessionId: activeSession.id, citationThreshold: retrievalMode === "strict" ? 0.45 : 0 },
+        token,
+        {
+          onStatus: (_s, msg) => setLoadingLabel(msg || "Đang xử lý…"),
+          onSources: (sources) => {
+            streamCitations = normalizeCitations(sources);
+            setCurrentCitations(streamCitations);
+            setInvalidCitationCount(Math.max(0, (Array.isArray(sources) ? sources.length : 0) - streamCitations.length));
+            setRightTab("sources");
+          },
+          onDiagnostics: (diag) => { streamDiagnostics = diag; setDiagnostics(diag); },
+          onWarning: (warning) => { streamWarning = warning; },
+          onToken: enqueueTypewriterChunk,
+        },
+        { signal: controller.signal }
+      );
+      await renderChain;
+      setLoadingLabel("Đang lưu phiên…");
+      const finalMsg = {
+        id: assistantId,
+        role: "assistant",
+        content: full,
+        citations: streamCitations,
+        warning: streamWarning,
+        retrieval_diagnostics: streamDiagnostics || buildDiagnostics(streamCitations),
+      };
+      setMessages((prev) => regenerateIndex == null
+        ? [...prev.filter((m) => m.id !== assistantId), finalMsg]
+        : prev.map((m, i) => i === regenerateIndex ? finalMsg : m));
+      setDiagnostics(finalMsg.retrieval_diagnostics);
+      setCurrentCitations(streamCitations);
+    } catch (err) {
+      renderCancelled = true;
+      showToast("error", err.message || "Không thể gọi RAG.");
+    } finally {
+      renderCancelled = true;
+      setLoading(false);
+      setLoadingLabel("");
+      requestRef.current = null;
+    }
   };
+
   const handleSubmit = () => startChat({ question: input });
   const handleRegenerate = (idx) => { const user = [...messages].slice(0, idx).reverse().find((m) => m.role === "user"); if (!user) return showToast("error", "Không tìm thấy câu hỏi trước đó."); startChat({ question: user.content, regenerateIndex: idx }); };
   const showSources = (citation) => { if (citation && !currentCitations.length) setCurrentCitations([citation]); setRightTab("sources"); setMobileTab("sources"); };
