@@ -6,6 +6,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from supabase import Client, create_client
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -14,6 +15,10 @@ from app.dependencies import get_current_user
 from app.services.google_auth_service import verify_google_credential
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
+
+
+def _anon_client() -> Client:
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
 
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 ALLOWED_AVATAR_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
@@ -215,20 +220,12 @@ async def upload_avatar(avatar: UploadFile = File(...), user: dict = Depends(get
 
 @router.post("/change-password")
 async def change_password(payload: ChangePasswordRequest, user: dict = Depends(get_current_user)) -> dict:
-    profile = _get_profile(user)
-    if not profile.get("password_login_enabled"):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "PASSWORD_NOT_SET",
-                "message": "Tài khoản này chưa có mật khẩu. Vui lòng dùng chức năng đặt lại mật khẩu qua email.",
-            },
-        )
     if not payload.current_password:
         raise HTTPException(status_code=400, detail={"code": "CURRENT_PASSWORD_REQUIRED", "message": "Vui lòng nhập mật khẩu hiện tại."})
 
+    auth_client = _anon_client()
     try:
-        resp = supabase.auth.sign_in_with_password({"email": user["email"], "password": payload.current_password})
+        resp = auth_client.auth.sign_in_with_password({"email": user["email"], "password": payload.current_password})
         auth_error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
         if auth_error:
             raise ValueError(str(auth_error))
@@ -238,9 +235,17 @@ async def change_password(payload: ChangePasswordRequest, user: dict = Depends(g
     try:
         supabase.auth.admin.update_user_by_id(_user_id(user), {"password": payload.new_password})
     except Exception as exc:
-        print(f"PASSWORD UPDATE FAILED for user {_user_id(user)}: {exc}")
-        raise HTTPException(status_code=400, detail={"code": "PASSWORD_UPDATE_FAILED", "message": "Không thể cập nhật mật khẩu. Vui lòng thử lại sau."}) from exc
-    _update_profile(user, {"password_login_enabled": True})
+        message = str(exc)
+        print(f"PASSWORD UPDATE ADMIN FALLBACK for user {_user_id(user)}: {exc}")
+        try:
+            update_resp = auth_client.auth.update_user({"password": payload.new_password})
+            update_error = getattr(update_resp, "error", None) or (update_resp.get("error") if isinstance(update_resp, dict) else None)
+            if update_error:
+                raise RuntimeError(str(update_error))
+        except Exception as fallback_exc:
+            print(f"PASSWORD UPDATE FAILED for user {_user_id(user)}: admin={message}; session={fallback_exc}")
+            raise HTTPException(status_code=400, detail={"code": "PASSWORD_UPDATE_FAILED", "message": "Không thể cập nhật mật khẩu. Vui lòng thử lại sau."}) from fallback_exc
+    _update_profile(user, {"password_login_enabled": True, "default_password_must_change": False})
     return {"success": True, "data": {"message": "Đã cập nhật mật khẩu."}}
 
 

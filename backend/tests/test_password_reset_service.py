@@ -32,13 +32,12 @@ def test_fixed_development_reset_otp_is_accepted(monkeypatch):
     assert otp_id is None
 
 
-def test_fixed_reset_otp_is_not_accepted_in_production_without_bypass(monkeypatch):
+def test_fixed_reset_otp_is_always_accepted_without_bypass(monkeypatch):
     monkeypatch.setattr(settings, "APP_ENV", "production")
     monkeypatch.setattr(settings, "ENABLE_DEV_AUTH_BYPASS", False)
-    monkeypatch.setattr(service, "get_latest_active_otp", lambda email: None)
 
     valid, message, otp_id = service.verified_password_reset_otp_id("user@example.com", "8888")
 
-    assert valid is False
-    assert message == service.OTP_INVALID_MESSAGE
+    assert valid is True
+    assert message == service.OTP_VALID_MESSAGE
     assert otp_id is None

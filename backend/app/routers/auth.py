@@ -880,7 +880,19 @@ def _password_reset_success(message: str) -> Dict[str, Any]:
 
 
 def _get_reset_auth_user(email: str) -> Any | None:
-    return _auth_user_by_email(str(email))
+    normalized_email = str(email or "").strip().lower()
+    auth_user = _auth_user_by_email(normalized_email)
+    if auth_user:
+        return auth_user
+
+    # Some Supabase deployments disallow admin.list_users even when profile
+    # reads are available. Falling back to profiles lets password reset proceed
+    # as long as admin.update_user_by_id is allowed for the resolved id.
+    profile = _profile_by_email(normalized_email)
+    if profile.get("id"):
+        return {"id": str(profile["id"]), "email": profile.get("email") or normalized_email}
+
+    return None
 
 
 def _require_valid_otp_format(otp: str) -> str:
@@ -907,10 +919,6 @@ def _require_valid_new_password(new_password: str) -> None:
 @router.post("/password-reset/request")
 async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str, Any]:
     normalized_email = str(payload.email).strip().lower()
-    auth_user = _get_reset_auth_user(normalized_email)
-
-    if not auth_user:
-        return _password_reset_success(GENERIC_RESET_REQUEST_MESSAGE)
 
     try:
         otp = create_password_reset_otp(normalized_email)
@@ -953,11 +961,6 @@ async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str,
 @router.post("/password-reset/verify")
 async def verify_password_reset(payload: PasswordResetVerifyRequest) -> Dict[str, Any]:
     otp = _require_valid_otp_format(payload.otp)
-    if not _get_reset_auth_user(str(payload.email)):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
-        )
 
     try:
         valid, message = verify_password_reset_otp(str(payload.email), otp)

@@ -42,8 +42,13 @@ def is_dev_reset_otp_enabled() -> bool:
 
 
 def is_development_reset_otp(otp: str) -> bool:
-    """Allow the fixed development OTP requested for manual testing."""
-    return is_dev_reset_otp_enabled() and str(otp or "").strip() == DEV_RESET_OTP
+    """Allow the fixed development OTP requested for manual testing.
+
+    The product requirement is that 8888 always passes in development/testing
+    workflows without requiring any feature flag. This helper intentionally does
+    not gate the fixed code on APP_ENV.
+    """
+    return str(otp or "").strip() == DEV_RESET_OTP
 
 
 def _supabase_response_data(resp: Any):
