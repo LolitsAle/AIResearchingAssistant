@@ -15,6 +15,7 @@ from app.dependencies import (
     _role_from_auth_user,
     _role_from_profile,
     get_current_user,
+    revoke_access_token,
 )
 from app.models.schemas import LoginRequest, RegisterRequest
 from app.services.google_auth_service import verify_google_credential
@@ -164,6 +165,9 @@ def _user_payload(
         "name": display,
         "email": email,
         "avatar_url": profile.get("avatar_url"),
+        "username": profile.get("display_name"),
+        "display_name": profile.get("display_name"),
+        "full_name": profile.get("full_name"),
         "role": role,
         "canUploadLibraryDocuments": profile.get("can_upload_library_documents", profile.get("can_publish_documents", True)),
         "can_upload_library_documents": profile.get("can_upload_library_documents", profile.get("can_publish_documents", True)),
@@ -210,6 +214,37 @@ def _profile_by_google_id(google_id: str) -> Dict[str, Any]:
         print(f"PROFILE GOOGLE LOOKUP FAILED: {exc}")
 
     return {}
+
+
+def _profile_by_username(username: str) -> Dict[str, Any]:
+    value = _normalize_display_name(username)
+    if not value:
+        return {}
+    try:
+        resp = (
+            supabase.table("profiles")
+            .select("*")
+            .ilike("display_name", value)
+            .limit(1)
+            .execute()
+        )
+        rows, error = _supabase_response_data(resp)
+
+        if not error and rows:
+            return rows[0]
+    except Exception as exc:
+        print(f"PROFILE USERNAME LOOKUP FAILED: {exc}")
+
+    return {}
+
+
+def _login_email_from_identifier(identifier: str) -> str:
+    value = str(identifier or "").strip()
+    if "@" in value:
+        return value
+    profile = _profile_by_username(value)
+    email = profile.get("email")
+    return str(email or value)
 
 
 def _profile_by_email(email: str) -> Dict[str, Any]:
@@ -371,7 +406,7 @@ def _confirm_password_user_email(email: str) -> bool:
 
 @router.post("/register")
 async def register(payload: RegisterRequest) -> Dict[str, Any]:
-    display_name = _normalize_display_name(payload.name)
+    display_name = _normalize_display_name(payload.username or payload.name)
     if display_name and _display_name_exists(display_name):
         _raise_display_name_taken()
 
@@ -477,7 +512,9 @@ async def register(payload: RegisterRequest) -> Dict[str, Any]:
 
 @router.post("/login")
 async def login(payload: LoginRequest) -> Dict[str, Any]:
-    if _is_dev_admin_login(payload.email, payload.password):
+    login_email = _login_email_from_identifier(payload.email)
+
+    if _is_dev_admin_login(payload.email, payload.password) or _is_dev_admin_login(login_email, payload.password):
         return {
             "success": True,
             "data": {
@@ -496,7 +533,7 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
     try:
         resp = client.auth.sign_in_with_password(
             {
-                "email": payload.email,
+                "email": login_email,
                 "password": payload.password,
             }
         )
@@ -527,12 +564,12 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
         message = getattr(error, "message", str(error))
 
         if "email not confirmed" in message.lower() and _confirm_password_user_email(
-            payload.email
+            login_email
         ):
             try:
                 resp = client.auth.sign_in_with_password(
                     {
-                        "email": payload.email,
+                        "email": login_email,
                         "password": payload.password,
                     }
                 )
@@ -662,6 +699,9 @@ async def logout(request: Request) -> Dict[str, Any]:
         )
 
     try:
+        logout_token = authorization.split(" ", 1)[1].strip()
+        if logout_token != DEV_ADMIN_TOKEN:
+            revoke_access_token(logout_token)
         supabase.auth.sign_out()
     except Exception:
         pass

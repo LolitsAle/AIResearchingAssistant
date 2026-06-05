@@ -9,6 +9,7 @@ const AuthContext = createContext();
 const TOKEN_KEY = 'ai-research-access-token';
 const USER_KEY = 'ai-research-user';
 const FORCE_LOGOUT_MESSAGE_KEY = 'ai-research-force-logout-message';
+const LOGOUT_MARKER_KEY = 'ai-research-logged-out';
 
 export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(null);
@@ -18,6 +19,13 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const savedToken = localStorage.getItem(TOKEN_KEY);
     const savedUser = localStorage.getItem(USER_KEY);
+    const logoutMarker = localStorage.getItem(LOGOUT_MARKER_KEY);
+    if (logoutMarker) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      setIsReady(true);
+      return;
+    }
     if (savedToken) setToken(savedToken);
     if (savedUser) {
       try { setUser(JSON.parse(savedUser)); } catch { localStorage.removeItem(USER_KEY); }
@@ -33,6 +41,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
       localStorage.setItem(FORCE_LOGOUT_MESSAGE_KEY, message);
+      localStorage.setItem(LOGOUT_MARKER_KEY, String(Date.now()));
       if (window.location.pathname !== '/login') window.location.href = '/login';
     };
     window.addEventListener('auth:force-logout', forceLogout);
@@ -44,7 +53,7 @@ export const AuthProvider = ({ children }) => {
     let cancelled = false;
     api.me(token)
       .then((resp) => {
-        if (!cancelled && resp?.user) {
+        if (!cancelled && resp?.user && !localStorage.getItem(LOGOUT_MARKER_KEY)) {
           setUser(resp.user);
           localStorage.setItem(USER_KEY, JSON.stringify(resp.user));
         }
@@ -56,6 +65,7 @@ export const AuthProvider = ({ children }) => {
   const loginContext = (newToken, userData) => {
     setToken(newToken);
     setUser(userData);
+    localStorage.removeItem(LOGOUT_MARKER_KEY);
     localStorage.setItem(TOKEN_KEY, newToken);
     localStorage.setItem(USER_KEY, JSON.stringify(userData || null));
     setIsReady(true);
@@ -71,6 +81,7 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.setItem(LOGOUT_MARKER_KEY, String(Date.now()));
   };
 
   return (

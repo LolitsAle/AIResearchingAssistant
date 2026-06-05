@@ -645,7 +645,7 @@ function DocumentPreviewPanel({ label, document }) {
     <article className="ca-doc-panel">
       <div className="ca-doc-panel__header">
         <h3>Tài liệu {label}: {document?.title || 'Chưa chọn'}</h3>
-        <p className="ca-muted">{sourceLabel(document)} · {document?.filename || '—'}</p>
+        {(!document || !isPdfDocument(document)) && <p className="ca-muted">{sourceLabel(document)} · {document?.filename || '—'}</p>}
       </div>
 
       {document && isPdfDocument(document) ? (

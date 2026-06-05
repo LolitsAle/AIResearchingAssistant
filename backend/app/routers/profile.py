@@ -44,6 +44,7 @@ def _safe_profile(row: dict | None, user: dict) -> dict:
         "avatar_url": row.get("avatar_url"),
         "full_name": row.get("full_name"),
         "display_name": row.get("display_name"),
+        "username": row.get("display_name"),
         "gender": row.get("gender"),
         "date_of_birth": row.get("date_of_birth"),
         "created_at": row.get("created_at"),
@@ -149,6 +150,7 @@ def _update_profile(user: dict, updates: dict) -> dict:
 class ProfileUpdateRequest(BaseModel):
     full_name: str | None = Field(default=None, max_length=160)
     display_name: str | None = Field(default=None, max_length=80)
+    username: str | None = Field(default=None, max_length=80)
     gender: Literal["male", "female", "other", "prefer_not_to_say"] | None = None
     date_of_birth: date | None = None
 
@@ -179,6 +181,10 @@ async def get_me(user: dict = Depends(get_current_user)) -> dict:
 @router.patch("/me")
 async def update_me(payload: ProfileUpdateRequest, user: dict = Depends(get_current_user)) -> dict:
     updates = payload.model_dump(exclude_unset=True)
+    if "username" in updates and "display_name" not in updates:
+        updates["display_name"] = updates.pop("username")
+    else:
+        updates.pop("username", None)
     if "display_name" in updates:
         updates["display_name"] = _normalize_display_name(updates.get("display_name"))
         if updates["display_name"] and _display_name_exists(updates["display_name"], _user_id(user)):
