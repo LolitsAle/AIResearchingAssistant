@@ -48,6 +48,8 @@ function normalizeDocument(doc = {}) {
     file_type: doc.file_type || "file",
     processing_status: isReady ? "ready" : status,
     processing_error: doc.processing_error || doc.error || doc.message || null,
+    indexing_job_id: doc.indexing_job_id || doc.indexingJobId || doc.indexing_job?.id || null,
+    indexing_progress: Number(doc.indexing_progress ?? doc.indexing_job?.progress ?? (isReady ? 100 : 0)),
     is_vector_ready: isReady,
     chunk_count: Number(doc.chunk_count || 0),
     page_count: Number(doc.page_count || 0),
@@ -189,7 +191,7 @@ function DocumentsPanel({ documents, selectedDocumentIds, onToggleDocument, onSe
           const ready = doc.processing_status === "ready";
           const failed = doc.processing_status === "failed";
           const stepIndex = Math.max(1, ["uploaded", "parsing", "chunking", "embedding", "ready"].indexOf(doc.processing_status) + 1);
-          const percent = ready ? 100 : failed ? 100 : Math.round((stepIndex / 5) * 100);
+          const percent = ready ? 100 : failed ? 100 : Math.max(Number(doc.indexing_progress || 0), Math.round((stepIndex / 5) * 100));
           return <div key={doc.id} className="rw-doc">
             <div className="rw-doc-top"><input type="checkbox" checked={selectedDocumentIds.includes(doc.id)} disabled={!ready} onChange={() => onToggleDocument(doc.id)} aria-label={`Chọn tài liệu ${doc.filename}`} title={ready ? "Cập nhật ngay tài liệu tham chiếu của phiên hiện tại" : "Tài liệu chưa sẵn sàng"} /><div style={{ flex: 1 }}><div className="rw-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}><div className="rw-doc-title">{doc.filename}</div><button className="rw-icon-btn rw-danger" type="button" aria-label={`Xóa tài liệu ${doc.filename}`} title="Xóa tài liệu khỏi notebook" onClick={() => onDeleteDocument(doc)}>🗑</button></div><div className="rw-meta"><span>{doc.file_type}</span><span>{doc.page_count} trang</span><span>{doc.chunk_count} chunks</span><span>{doc.is_vector_ready ? "Vector ready" : "Vector chưa sẵn sàng"}</span></div></div></div>
             <div className="rw-status-line"><div className="rw-status-fill" style={{ width: `${percent}%`, background: failed ? "#d86b5e" : undefined }} /></div>
@@ -439,6 +441,26 @@ export default function ResearchWorkspace() {
     try { const result = await api.updateResearchSession(activeSession.id, { selected_document_ids: nextIds }, token); const session = result?.session || { ...activeSession, selected_document_ids: nextIds }; setActiveSession(session); setSessions((prev) => prev.map((s) => s.id === session.id ? session : s)); showToast("success", "Đã cập nhật tài liệu tham chiếu của phiên."); } catch (err) { showToast("error", err.message || "Không thể cập nhật tài liệu phiên."); }
   };
   const toggleDocument = (docId) => { const next = selectedDocumentIds.includes(docId) ? selectedDocumentIds.filter((id) => id !== docId) : [...selectedDocumentIds, docId]; updateActiveSessionDocuments(next); };
+  const subscribeIndexingJob = (jobId) => {
+    if (!jobId || !token) return;
+    api.streamIndexingJob(jobId, token, {
+      onProgress: (job) => {
+        const docId = String(job.document_id || job.resource_id || "");
+        setDocuments((prev) => prev.map((doc) => doc.id === docId ? {
+          ...doc,
+          indexing_job_id: job.id || jobId,
+          indexing_progress: Number(job.progress || 0),
+          processing_status: job.status === "succeeded" ? "ready" : (job.stage || doc.processing_status),
+          status: job.status === "succeeded" ? "ready" : doc.status,
+          processing_error: job.error_message || doc.processing_error,
+          is_vector_ready: job.status === "succeeded" ? true : doc.is_vector_ready,
+        } : doc));
+      },
+      onDone: () => loadDocuments(),
+      onError: () => loadDocuments(),
+    }).catch(() => loadDocuments());
+  };
+
   const deleteDocument = async (doc) => {
     if (!doc?.id) return;
     if (!window.confirm(`Xóa tài liệu "${doc.filename}" khỏi notebook?`)) return;
@@ -454,7 +476,7 @@ export default function ResearchWorkspace() {
   };
   const handleUpload = async (files) => {
     setUploadError(""); const valid = files.filter((file) => { const ext = file.name.split(".").pop()?.toLowerCase(); if (!EXTENSIONS.has(ext)) { setUploadError(`Không hỗ trợ ${file.name}`); return false; } if (file.size > MAX_UPLOAD_BYTES) { setUploadError(`${file.name} vượt quá ${MAX_UPLOAD_MB}MB`); return false; } return true; }); if (!valid.length) return;
-    setUploadProgress(1); try { const result = await api.uploadDocuments(notebookId, valid, token, setUploadProgress); const uploaded = (result?.uploaded || []).map(normalizeDocument); const queued = (result?.queued || []).map(normalizeDocument); showToast("success", queued.length ? "Upload xong, tài liệu đang được index nền." : "Upload hoàn tất."); await loadDocuments(); if (activeSession?.id && uploaded.length) { const next = [...new Set([...selectedDocumentIds, ...uploaded.filter((d) => d.processing_status === "ready").map((d) => d.id)])]; await updateActiveSessionDocuments(next); } } catch (err) { setUploadError(err.message || "Upload thất bại."); } finally { setTimeout(() => setUploadProgress(0), 800); }
+    setUploadProgress(1); try { const result = await api.uploadDocuments(notebookId, valid, token, setUploadProgress); const uploaded = (result?.uploaded || []).map(normalizeDocument); const queued = (result?.queued || []).map(normalizeDocument); queued.forEach((doc) => subscribeIndexingJob(doc.indexing_job_id || doc.indexing_job?.id)); showToast("success", queued.length ? "Upload xong, tài liệu đang được index nền." : "Upload hoàn tất."); await loadDocuments(); if (activeSession?.id && uploaded.length) { const next = [...new Set([...selectedDocumentIds, ...uploaded.filter((d) => d.processing_status === "ready").map((d) => d.id)])]; await updateActiveSessionDocuments(next); } } catch (err) { setUploadError(err.message || "Upload thất bại."); } finally { setTimeout(() => setUploadProgress(0), 800); }
   };
   const searchLibrary = async () => { setLibraryLoading(true); try { const result = await api.listSystemLibraryDocuments({ q: libraryQuery, search: libraryQuery, limit: 12 }, token); setLibraryResults(result?.documents || result?.items || []); } catch (err) { showToast("error", err.message || "Không thể tìm thư viện."); } finally { setLibraryLoading(false); } };
   const linkLibraryDocument = async (id) => { try { await api.linkSystemDocumentToNotebook(notebookId, id, token); setLibraryOpen(false); showToast("success", "Đã link tài liệu từ thư viện."); await loadDocuments(); } catch (err) { showToast("error", err.message || "Không thể link tài liệu."); } };

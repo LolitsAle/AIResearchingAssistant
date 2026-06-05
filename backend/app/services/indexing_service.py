@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 from typing import Any
 
 from app.config import settings
@@ -17,9 +18,9 @@ from app.services.document_parser import (
     validate_research_file,
 )
 from app.services.embedder import embed_chunks
+from app.services.indexing_jobs import create_indexing_job, create_memory_indexing_job, report_indexing_progress
 
 logger = logging.getLogger(__name__)
-_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 def _supabase_response_data(resp: Any) -> tuple[Any, Any]:
@@ -51,6 +52,78 @@ def _vector_to_string(vector: list[float] | str | None) -> str:
     if isinstance(vector, str):
         return vector
     return "[" + ",".join(map(str, vector or [])) + "]"
+
+
+def _storage_object_path(document_id: str, filename: str) -> str:
+    safe_suffix = (filename or "document").replace("/", "_").replace("\\", "_")
+    return f"notebook-documents/{document_id}/{safe_suffix}"
+
+
+def upload_indexing_source_file(document_id: str, filename: str, contents: bytes, mime_type: str | None = None) -> str | None:
+    """Persist source bytes for durable worker processing; return storage path when available."""
+    path = _storage_object_path(document_id, filename)
+    content_type = mime_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    try:
+        supabase.storage.from_(settings.INDEXING_STORAGE_BUCKET).upload(
+            path,
+            contents,
+            {"content-type": content_type, "upsert": "true"},
+        )
+        return path
+    except Exception as exc:
+        logger.warning("Could not persist notebook source file to indexing storage; falling back to in-process payload: %s", exc)
+        return None
+
+
+def download_indexing_source_file(storage_path: str) -> bytes:
+    return supabase.storage.from_(settings.INDEXING_STORAGE_BUCKET).download(storage_path)
+
+
+async def create_notebook_indexing_job(
+    *,
+    doc_id: str,
+    notebook_id: str,
+    filename: str,
+    storage_path: str | None,
+    contents: bytes | None = None,
+    citation_threshold: float | None = 0,
+    tags: str = "",
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "doc_id": doc_id,
+        "notebook_id": notebook_id,
+        "filename": filename,
+        "storage_path": storage_path,
+        "citation_threshold": normalize_citation_threshold(citation_threshold),
+        "tags": tags,
+    }
+    # Fallback only. Durable deployments should apply docs/sql/indexing_jobs.sql and create INDEXING_STORAGE_BUCKET.
+    if not storage_path and contents is not None:
+        payload["inline_contents_hex"] = contents.hex()
+        return create_memory_indexing_job(job_type="notebook_document", resource_id=doc_id, payload=payload, user_id=user_id)
+    return await create_indexing_job(job_type="notebook_document", resource_id=doc_id, payload=payload, user_id=user_id)
+
+
+async def process_notebook_indexing_job(job: dict[str, Any]) -> dict[str, Any]:
+    payload = job.get("payload") or {}
+    storage_path = payload.get("storage_path")
+    if storage_path:
+        contents = await asyncio.to_thread(download_indexing_source_file, storage_path)
+    elif payload.get("inline_contents_hex"):
+        contents = bytes.fromhex(payload["inline_contents_hex"])
+    else:
+        raise RuntimeError("Indexing job has no durable source file payload")
+
+    return await index_notebook_document(
+        doc_id=str(payload.get("doc_id") or job.get("resource_id")),
+        notebook_id=str(payload.get("notebook_id") or ""),
+        filename=str(payload.get("filename") or "uploaded-document"),
+        contents=contents,
+        citation_threshold=payload.get("citation_threshold"),
+        tags=str(payload.get("tags") or ""),
+        job_id=str(job.get("id")),
+    )
 
 
 async def _insert_document_payload(payload: dict) -> dict:
@@ -171,22 +244,27 @@ async def index_notebook_document(
     contents: bytes,
     citation_threshold: float | None = 0,
     tags: str = "",
+    job_id: str | None = None,
 ) -> dict:
     """Parse, chunk, embed, and persist vectors for one notebook document."""
     try:
+        await report_indexing_progress(job_id, stage="parsing", progress=10, message="Đang đọc tài liệu")
         await _update_document(doc_id, {"status": "processing", "processing_status": "parsing", "processing_error": None, "is_vector_ready": False})
         pages, file_type = await parse_document(contents, filename)
         page_count = len(pages)
 
+        await report_indexing_progress(job_id, stage="chunking", progress=30, message="Đang chia nhỏ tài liệu")
         await _update_document(doc_id, {"file_type": file_type, "page_count": page_count, "processing_status": "chunking"})
         chunks = chunk_text(pages)
         if not chunks:
             raise EmptyDocumentText("Không đọc được nội dung văn bản từ file này.")
 
+        await report_indexing_progress(job_id, stage="embedding", progress=55, message="Đang tạo embedding")
         await _update_document(doc_id, {"chunk_count": len(chunks), "processing_status": "embedding"})
         texts = [chunk["content"] for chunk in chunks]
         embeddings = await embed_chunks(texts)
 
+        await report_indexing_progress(job_id, stage="inserting", progress=85, message="Đang lưu vector")
         await _delete_document_chunks(doc_id)
         chunk_rows = [
             {
@@ -215,6 +293,7 @@ async def index_notebook_document(
                 "tags": parse_tags(tags),
             },
         )
+        await report_indexing_progress(job_id, stage="ready", progress=100, message="Index hoàn tất")
         return updated or {"id": doc_id, "status": "ready", "processing_status": "ready", "is_vector_ready": True}
     except (UnsupportedDocumentType, EmptyDocumentText) as exc:
         logger.warning("Notebook document indexing failed for %s: %s", filename, exc)
@@ -226,17 +305,6 @@ async def index_notebook_document(
         raise
 
 
-def schedule_notebook_indexing(**kwargs: Any) -> asyncio.Task:
-    """Start notebook indexing without blocking the upload request."""
-    task = asyncio.create_task(index_notebook_document(**kwargs))
-
-    def _log_result(done: asyncio.Task) -> None:
-        try:
-            done.result()
-        except Exception as exc:  # pragma: no cover - background logging only
-            logger.warning("Background indexing task finished with error: %s", exc)
-
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_log_result)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
-    return task
+async def schedule_notebook_indexing(**kwargs: Any) -> dict[str, Any]:
+    """Backward-compatible wrapper that now enqueues a durable job instead of create_task."""
+    return await create_notebook_indexing_job(**kwargs)

@@ -14,6 +14,7 @@ from app.services.indexing_service import (
     create_queued_notebook_document,
     index_notebook_document,
     schedule_notebook_indexing,
+    upload_indexing_source_file,
 )
 from app.db.supabase_client import supabase
 from app.config import settings
@@ -320,7 +321,7 @@ async def upload_documents(
     results = []
 
     for file in files:
-        result = await _process_single_file(file, notebook_id, max_size_bytes, citation_threshold, tags)
+        result = await _process_single_file(file, notebook_id, max_size_bytes, citation_threshold, tags, user_id)
         if result.get("status") == "ready":
             log_user_activity(
                 user_id=user_id,
@@ -349,7 +350,7 @@ async def upload_documents(
     }
 
 
-async def _process_single_file(file: UploadFile, notebook_id: str, max_size_bytes: int, citation_threshold: float | None = 0, tags: str = "") -> dict:
+async def _process_single_file(file: UploadFile, notebook_id: str, max_size_bytes: int, citation_threshold: float | None = 0, tags: str = "", user_id: str | None = None) -> dict:
     """Validate and enqueue one file for indexing without blocking the upload request."""
 
     filename = normalize_upload_filename(file.filename, "uploaded-document")
@@ -389,26 +390,41 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
         logger.exception("Create queued document failed: %s", filename)
         return {"filename": filename, "file_type": file_type, "status": "error", "error": "DB_INSERT_FAILED"}
 
+    storage_path = None
+    if getattr(settings, "BACKGROUND_INDEXING_ENABLED", True):
+        storage_path = upload_indexing_source_file(queued["id"], filename, contents, getattr(file, "content_type", None))
+
     task_kwargs = {
         "doc_id": queued["id"],
         "notebook_id": notebook_id,
         "filename": filename,
-        "contents": contents,
+        "contents": contents if not storage_path else None,
+        "storage_path": storage_path,
         "citation_threshold": citation_threshold,
         "tags": tags,
+        "user_id": user_id,
     }
 
     if getattr(settings, "BACKGROUND_INDEXING_ENABLED", True):
-        schedule_notebook_indexing(**task_kwargs)
+        job = await schedule_notebook_indexing(**task_kwargs)
         return {
             **queued,
             "status": "processing",
             "processing_status": queued.get("processing_status") or "uploaded",
+            "indexing_job_id": job.get("id"),
+            "indexing_job": job,
             "message": "Tài liệu đã được đưa vào hàng đợi index. Bạn có thể tiếp tục làm việc trong khi hệ thống xử lý nền.",
         }
 
     try:
-        updated = await index_notebook_document(**task_kwargs)
+        updated = await index_notebook_document(
+            doc_id=queued["id"],
+            notebook_id=notebook_id,
+            filename=filename,
+            contents=contents,
+            citation_threshold=citation_threshold,
+            tags=tags,
+        )
         return {
             **queued,
             "file_type": updated.get("file_type") or queued.get("file_type"),

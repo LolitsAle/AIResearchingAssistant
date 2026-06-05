@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     BACKGROUND_INDEXING_ENABLED: bool = True
     INDEX_INSERT_BATCH_SIZE: int = 250
     EMBEDDING_CONCURRENCY: int = 2
+    INDEXING_STORAGE_BUCKET: str = "document-uploads"
+    INDEXING_WORKER_ENABLED: bool = True
 
     # Retrieval
     TOP_K_CHUNKS: int = 5
