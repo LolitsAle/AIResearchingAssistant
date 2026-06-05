@@ -17,8 +17,10 @@ from app.services.document_parser import (
     parse_document,
     validate_research_file,
 )
+from app.services.document_intelligence import build_document_intelligence, persist_document_intelligence
 from app.services.embedder import embed_chunks
 from app.services.indexing_jobs import create_indexing_job, create_memory_indexing_job, report_indexing_progress
+from app.services.observability import emit_metric, metric_timer
 
 logger = logging.getLogger(__name__)
 
@@ -250,19 +252,23 @@ async def index_notebook_document(
     try:
         await report_indexing_progress(job_id, stage="parsing", progress=10, message="Đang đọc tài liệu")
         await _update_document(doc_id, {"status": "processing", "processing_status": "parsing", "processing_error": None, "is_vector_ready": False})
-        pages, file_type = await parse_document(contents, filename)
+        with metric_timer("indexing.parse", doc_id=doc_id, notebook_id=notebook_id, filename=filename, file_size=len(contents)):
+            pages, file_type = await parse_document(contents, filename)
         page_count = len(pages)
 
         await report_indexing_progress(job_id, stage="chunking", progress=30, message="Đang chia nhỏ tài liệu")
         await _update_document(doc_id, {"file_type": file_type, "page_count": page_count, "processing_status": "chunking"})
-        chunks = chunk_text(pages)
+        with metric_timer("indexing.chunk", doc_id=doc_id, notebook_id=notebook_id, page_count=page_count) as chunk_metric:
+            chunks = chunk_text(pages)
+            chunk_metric["chunk_count"] = len(chunks)
         if not chunks:
             raise EmptyDocumentText("Không đọc được nội dung văn bản từ file này.")
 
         await report_indexing_progress(job_id, stage="embedding", progress=55, message="Đang tạo embedding")
         await _update_document(doc_id, {"chunk_count": len(chunks), "processing_status": "embedding"})
         texts = [chunk["content"] for chunk in chunks]
-        embeddings = await embed_chunks(texts)
+        with metric_timer("indexing.embed", doc_id=doc_id, notebook_id=notebook_id, chunk_count=len(chunks)):
+            embeddings = await embed_chunks(texts)
 
         await report_indexing_progress(job_id, stage="inserting", progress=85, message="Đang lưu vector")
         await _delete_document_chunks(doc_id)
@@ -278,7 +284,10 @@ async def index_notebook_document(
             }
             for index in range(len(chunks))
         ]
-        await _insert_chunk_rows(chunk_rows)
+        with metric_timer("indexing.insert", doc_id=doc_id, notebook_id=notebook_id, chunk_count=len(chunk_rows)):
+            await _insert_chunk_rows(chunk_rows)
+        intelligence = build_document_intelligence(doc_id=doc_id, notebook_id=notebook_id, filename=filename, pages=pages, chunks=chunks)
+        await persist_document_intelligence(intelligence)
         updated = await _update_document(
             doc_id,
             {
@@ -294,6 +303,7 @@ async def index_notebook_document(
             },
         )
         await report_indexing_progress(job_id, stage="ready", progress=100, message="Index hoàn tất")
+        emit_metric("indexing.completed", doc_id=doc_id, notebook_id=notebook_id, page_count=page_count, chunk_count=len(chunks), job_id=job_id)
         return updated or {"id": doc_id, "status": "ready", "processing_status": "ready", "is_vector_ready": True}
     except (UnsupportedDocumentType, EmptyDocumentText) as exc:
         logger.warning("Notebook document indexing failed for %s: %s", filename, exc)

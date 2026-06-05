@@ -13,6 +13,7 @@ from typing import List
 
 from app.config import settings
 from app.db.supabase_client import supabase
+from app.services.observability import emit_metric
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,16 @@ async def retrieve_rag_context(query_vector: List[float], notebook_id: str, docu
         )
     context_chunks = await build_hierarchical_context(chunks, notebook_id)
     result = analyze_retrieval_scope(context_chunks, threshold)
+    emit_metric(
+        "retrieval.completed",
+        notebook_id=notebook_id,
+        selected_doc_count=len(document_ids or []),
+        candidate_count=len(chunks or []),
+        final_context_count=len(context_chunks or []),
+        top_score=result.top_score,
+        retrieval_mode="hierarchical",
+        out_of_scope=result.is_out_of_scope,
+    )
     if not result.chunks and document_ids:
         fallback_chunks = await load_selected_document_context(notebook_id, document_ids, settings.TOP_K_CHUNKS)
         return RetrievalResult(chunks=[chunk for chunk in fallback_chunks if _chunk_has_text(chunk)], top_score=None, is_out_of_scope=True)

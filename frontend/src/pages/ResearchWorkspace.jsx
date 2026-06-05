@@ -625,8 +625,48 @@ export default function ResearchWorkspace() {
       setSavingStudyNote(false);
     }
   };
-  const generateFlashcards = async () => { if (!activeSession?.id || !selectedDocumentIds.length) return showToast("error", "Cần phiên và tài liệu đã chọn."); setQuickLoading(true); try { const result = await api.generateFlashcards(activeSession.id, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(flashcardCount, 5)) }, token); setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards: (result?.flashcards || []).slice(0, 5), warning: result?.warning }); } catch (err) { showToast("error", err.message || "Không thể tạo flashcard."); } finally { setQuickLoading(false); } };
-  const generateQuiz = async () => { if (!activeSession?.id || !selectedDocumentIds.length) return showToast("error", "Cần phiên và tài liệu đã chọn."); setQuickLoading(true); try { const result = await api.generateQuiz(activeSession.id, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(quizCount, 5)), question_type: "multiple_choice" }, token); setQuizModal({ title: "Quiz từ tài liệu", questions: (result?.quiz?.questions || result?.questions || []).slice(0, 5), warning: result?.warning }); } catch (err) { showToast("error", err.message || "Không thể tạo quiz."); } finally { setQuickLoading(false); } };
+  const waitForGenerationJob = async (jobId, fallbackError) => new Promise((resolve, reject) => {
+    if (!jobId) return reject(new Error(fallbackError));
+    api.streamGenerationJob(jobId, token, {
+      onProgress: (job) => setLoadingLabel(job?.error_message || job?.stage || "Đang tạo nội dung học tập…"),
+      onDone: (event) => {
+        const job = event?.job || {};
+        if (job.status === "failed") reject(new Error(job.error_message || fallbackError));
+        else resolve(job.result || {});
+      },
+      onError: (message) => reject(new Error(message || fallbackError)),
+    }).catch(reject);
+  });
+  const generateFlashcards = async () => {
+    if (!activeSession?.id || !selectedDocumentIds.length) return showToast("error", "Cần phiên và tài liệu đã chọn.");
+    setQuickLoading(true);
+    setLoadingLabel("Đang xếp hàng tạo flashcards…");
+    try {
+      const queued = await api.generateFlashcards(activeSession.id, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(flashcardCount, 5)) }, token);
+      const result = await waitForGenerationJob(queued?.job_id || queued?.job?.id, "Không thể tạo flashcard.");
+      setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards: (result?.flashcards || []).slice(0, 5), warning: result?.warning });
+    } catch (err) {
+      showToast("error", err.message || "Không thể tạo flashcard.");
+    } finally {
+      setQuickLoading(false);
+      setLoadingLabel("");
+    }
+  };
+  const generateQuiz = async () => {
+    if (!activeSession?.id || !selectedDocumentIds.length) return showToast("error", "Cần phiên và tài liệu đã chọn.");
+    setQuickLoading(true);
+    setLoadingLabel("Đang xếp hàng tạo quiz…");
+    try {
+      const queued = await api.generateQuiz(activeSession.id, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(quizCount, 5)), question_type: "multiple_choice" }, token);
+      const result = await waitForGenerationJob(queued?.job_id || queued?.job?.id, "Không thể tạo quiz.");
+      setQuizModal({ title: "Quiz từ tài liệu", questions: (result?.quiz?.questions || result?.questions || []).slice(0, 5), warning: result?.warning });
+    } catch (err) {
+      showToast("error", err.message || "Không thể tạo quiz.");
+    } finally {
+      setQuickLoading(false);
+      setLoadingLabel("");
+    }
+  };
   const resize = (side, event) => { const startX = event.clientX; const start = side === "left" ? leftWidth : rightWidth; const set = side === "left" ? setLeftWidth : setRightWidth; const onMove = (e) => set(Math.min(side === "left" ? 520 : 560, Math.max(side === "left" ? 260 : 300, side === "left" ? start + e.clientX - startX : start - (e.clientX - startX)))); const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }; document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp); };
 
   return <div className="rw-page"><Styles /><div className="rw-topbar"><div className="rw-row"><button className="rw-soft-btn" type="button" onClick={() => navigate("/notebook")}>← Quay lại Notebook</button><div className="rw-title"><h1>Research Workspace · {notebookName}</h1><p>Tạo notebook vẫn ở trang danh sách; khi vào notebook sẽ làm việc trong workspace này.</p></div></div><div className="rw-row"><button className="rw-soft-btn" type="button" aria-label="Ẩn hiện panel trái" onClick={() => setLeftCollapsed(!leftCollapsed)}>{leftCollapsed ? "Mở Tài liệu" : "Ẩn Tài liệu"}</button><button className="rw-soft-btn" type="button" aria-label="Ẩn hiện panel phải" onClick={() => setRightCollapsed(!rightCollapsed)}>{rightCollapsed ? "Mở Ghi chú/Nguồn" : "Ẩn Ghi chú/Nguồn"}</button></div></div><div className="rw-mobile-tabs">{[["documents", "Tài liệu"], ["chat", "Chat"], ["notes", "Ghi chú"], ["sources", "Nguồn"]].map(([key, label]) => <button key={key} type="button" className={mobileTab === key ? "active" : ""} onClick={() => { setMobileTab(key); if (["notes", "sources"].includes(key)) setRightTab(key); }}>{label}</button>)}</div><div className="rw-shell">

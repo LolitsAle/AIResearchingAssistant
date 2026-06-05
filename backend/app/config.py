@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     EMBEDDING_CONCURRENCY: int = 2
     INDEXING_STORAGE_BUCKET: str = "document-uploads"
     INDEXING_WORKER_ENABLED: bool = True
+    GENERATION_WORKER_ENABLED: bool = True
 
     # Retrieval
     TOP_K_CHUNKS: int = 5
