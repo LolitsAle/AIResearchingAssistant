@@ -10,6 +10,43 @@ const TOKEN_KEY = 'ai-research-access-token';
 const USER_KEY = 'ai-research-user';
 const FORCE_LOGOUT_MESSAGE_KEY = 'ai-research-force-logout-message';
 const LOGOUT_MARKER_KEY = 'ai-research-logged-out';
+const APP_SESSION_KEYS = [
+  'academicLens:session',
+  'academicLens:lastPath',
+  'researchWorkspace:lastPath',
+];
+const APP_SESSION_PREFIXES = ['academic-lens-note:', 'nb_name_'];
+const CROSS_ANALYSIS_DRAFT_KEY = 'cross-analysis-current-draft-v1';
+
+function clearStoredWorkSessionData() {
+  APP_SESSION_KEYS.forEach((key) => localStorage.removeItem(key));
+  localStorage.removeItem(CROSS_ANALYSIS_DRAFT_KEY);
+  sessionStorage.removeItem(CROSS_ANALYSIS_DRAFT_KEY);
+
+  [localStorage, sessionStorage].forEach((storage) => {
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index);
+      if (key && APP_SESSION_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        storage.removeItem(key);
+      }
+    }
+  });
+
+  window.dispatchEvent(new CustomEvent('auth:clear-session-data'));
+}
+
+function storedUserId() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+    return saved?.id || saved?.user_id || saved?.email || null;
+  } catch {
+    return null;
+  }
+}
+
+function userIdentity(userData) {
+  return userData?.id || userData?.user_id || userData?.email || null;
+}
 
 export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(null);
@@ -38,6 +75,7 @@ export const AuthProvider = ({ children }) => {
       const message = event?.detail?.message || 'Tài khoản của bạn đã bị vô hiệu hóa hoặc không tồn tại.';
       setToken(null);
       setUser(null);
+      clearStoredWorkSessionData();
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
       localStorage.setItem(FORCE_LOGOUT_MESSAGE_KEY, message);
@@ -63,6 +101,9 @@ export const AuthProvider = ({ children }) => {
   }, [token, isReady]);
 
   const loginContext = (newToken, userData) => {
+    const previousUserId = storedUserId();
+    const nextUserId = userIdentity(userData);
+    if (previousUserId && nextUserId && previousUserId !== nextUserId) clearStoredWorkSessionData();
     setToken(newToken);
     setUser(userData);
     localStorage.removeItem(LOGOUT_MARKER_KEY);
@@ -79,6 +120,7 @@ export const AuthProvider = ({ children }) => {
   const logoutContext = () => {
     setToken(null);
     setUser(null);
+    clearStoredWorkSessionData();
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     localStorage.setItem(LOGOUT_MARKER_KEY, String(Date.now()));

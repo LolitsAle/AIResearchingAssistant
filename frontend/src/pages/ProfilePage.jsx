@@ -223,7 +223,7 @@ function Security({ profile, token, onUpdate, onSuccess, onError }) {
       <form className="card form" onSubmit={changePassword}>
         <h2>Đổi mật khẩu</h2>
         {profile.default_password_must_change ? <p className="muted">Bạn nên đặt mật khẩu mới cho tài khoản này.</p> : null}
-        <PasswordField label="Mật khẩu hiện tại" value={pw.current_password} onChange={e=>setPw({...pw,current_password:e.target.value})} autoComplete="current-password" />
+        <PasswordField label="Mật khẩu hiện tại" value={pw.current_password} onChange={e=>setPw({...pw,current_password:e.target.value})} required autoComplete="current-password" />
         <PasswordField label="Mật khẩu mới" value={pw.new_password} onChange={e=>setPw({...pw,new_password:e.target.value})} required autoComplete="new-password" />
         <PasswordField label="Xác nhận mật khẩu mới" value={pw.confirm} onChange={e=>setPw({...pw,confirm:e.target.value})} required autoComplete="new-password" />
         <button className="primary">Cập nhật mật khẩu</button>
