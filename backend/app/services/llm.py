@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 client = AsyncGroq(api_key=settings.GROQ_API_KEY)
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-MAX_PROMPT_TOKENS = 6000 
-RESERVED_HISTORY_TOKENS = 1000
+MAX_PROMPT_TOKENS = int(getattr(settings, "MAX_PROMPT_TOKENS", 12000) or 12000)
+RESERVED_HISTORY_TOKENS = int(getattr(settings, "RESERVED_HISTORY_TOKENS", 1500) or 1500)
 
 try:
     _tokenizer = tiktoken.get_encoding("cl100k_base")

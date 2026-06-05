@@ -22,6 +22,7 @@ from app.services.embedder import embed_chunks, embed_query
 from app.services.llm import generate_system_document_metadata
 
 logger = logging.getLogger(__name__)
+_SYSTEM_INDEXING_TASKS: set[asyncio.Task] = set()
 
 DOCUMENT_STATUSES = {"PUBLISHED", "PENDING_REVIEW", "HIDDEN", "REJECTED", "DELETED", "NEEDS_CHANGES", "PROCESSING"}
 USER_UPLOAD_DEFAULT_STATUS = "PENDING_REVIEW"
@@ -632,6 +633,64 @@ def _metadata_sample(pages: list[dict], chunks: list[dict]) -> str:
     return (first_pages + "\n\n" + sampled_chunks).strip()[:12000]
 
 
+async def _finalize_system_document_vectors(document_id: str, chunks: list[dict], document_status: str, rows: list[dict] | None = None) -> dict:
+    """Embed and persist System Library chunks; safe to run in request or background."""
+    texts = [chunk["content"] for chunk in chunks]
+    embeddings = await embed_chunks(texts)
+    chunk_rows = [
+        {
+            "document_id": document_id,
+            "content": chunks[index]["content"],
+            "page_start": chunks[index].get("page_number"),
+            "page_end": chunks[index].get("page_number"),
+            "embedding": "[" + ",".join(map(str, embeddings[index])) + "]",
+        }
+        for index in range(len(chunks))
+    ]
+    batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
+
+    def _insert_batches() -> None:
+        supabase.table("system_document_chunks").delete().eq("document_id", document_id).execute()
+        for start in range(0, len(chunk_rows), batch_size):
+            supabase.table("system_document_chunks").insert(chunk_rows[start : start + batch_size]).execute()
+
+    await asyncio.to_thread(_insert_batches)
+    final_processing_status = "published" if _normalize_document_status(document_status) == "PUBLISHED" else "pending_review"
+    try:
+        update_resp = supabase.table("system_documents").update({"is_vector_ready": True, "processing_status": final_processing_status}).eq("id", document_id).execute()
+    except Exception:
+        update_resp = supabase.table("system_documents").update({"is_vector_ready": True}).eq("id", document_id).execute()
+    updated_rows, update_error = _supabase_response_data(update_resp)
+    if update_error:
+        raise RuntimeError(update_error)
+    return updated_rows[0] if updated_rows else {**((rows or [{}])[0]), "is_vector_ready": True, "processing_status": final_processing_status}
+
+
+def _schedule_system_document_indexing(document_id: str, chunks: list[dict], document_status: str, rows: list[dict] | None = None) -> None:
+    async def _run() -> None:
+        try:
+            await _finalize_system_document_vectors(document_id, chunks, document_status, rows)
+        except Exception as exc:
+            logger.exception("System document background indexing failed for %s", document_id)
+            try:
+                supabase.table("system_documents").update({"is_vector_ready": False, "processing_status": "failed"}).eq("id", document_id).execute()
+            except Exception:
+                logger.warning("Could not mark failed system document %s", document_id)
+            raise exc
+
+    task = asyncio.create_task(_run())
+
+    def _log_result(done: asyncio.Task) -> None:
+        try:
+            done.result()
+        except Exception as exc:  # pragma: no cover - background logging only
+            logger.warning("Background system indexing task finished with error: %s", exc)
+
+    _SYSTEM_INDEXING_TASKS.add(task)
+    task.add_done_callback(_log_result)
+    task.add_done_callback(_SYSTEM_INDEXING_TASKS.discard)
+
+
 async def _auto_metadata(pages: list[dict], chunks: list[dict], category_override: str | None, tags_override: str | list[str] | None) -> dict:
     fallback = {
         "category": (category_override or "Khác").strip() or "Khác",
@@ -767,28 +826,11 @@ async def import_system_document_from_upload(
         raise HTTPException(status_code=500, detail={"code": "DB_UPDATE_FAILED", "message": "Không thể lưu metadata file tải xuống."}) from exc
 
     try:
-        texts = [chunk["content"] for chunk in chunks]
-        embeddings = await embed_chunks(texts)
-        chunk_rows = [
-            {
-                "document_id": document_id,
-                "content": chunks[index]["content"],
-                "page_start": chunks[index].get("page_number"),
-                "page_end": chunks[index].get("page_number"),
-                "embedding": "[" + ",".join(map(str, embeddings[index])) + "]",
-            }
-            for index in range(len(chunks))
-        ]
-        supabase.table("system_document_chunks").insert(chunk_rows).execute()
-        final_processing_status = "published" if _normalize_document_status(document_status) == "PUBLISHED" else "pending_review"
-        try:
-            update_resp = supabase.table("system_documents").update({"is_vector_ready": True, "processing_status": final_processing_status}).eq("id", document_id).execute()
-        except Exception:
-            update_resp = supabase.table("system_documents").update({"is_vector_ready": True}).eq("id", document_id).execute()
-        updated_rows, update_error = _supabase_response_data(update_resp)
-        if update_error:
-            raise RuntimeError(update_error)
-        source = updated_rows[0] if updated_rows else {**rows[0], "is_vector_ready": True}
+        if getattr(settings, "BACKGROUND_INDEXING_ENABLED", True):
+            _schedule_system_document_indexing(document_id, chunks, document_status, rows)
+            source = {**rows[0], "is_vector_ready": False, "processing_status": "embedding"}
+        else:
+            source = await _finalize_system_document_vectors(document_id, chunks, document_status, rows)
     except Exception as exc:
         logger.exception("System document embedding/chunk insert failed")
         try:
@@ -1120,7 +1162,8 @@ async def import_community_document_from_upload(
         processing_status="uploaded",
     )
     try:
-        payload = {"source_type": "USER_UPLOAD", "uploader_name": uploader_name, "status": default_status, "copyright_confirmed": True, "processing_status": "pending_review" if default_status == "PENDING_REVIEW" else "published"}
+        payload = {"source_type": "USER_UPLOAD", "uploader_name": uploader_name, "status": default_status, "copyright_confirmed": True}
+        payload["processing_status"] = ("pending_review" if default_status == "PENDING_REVIEW" else "published") if document.get("is_vector_ready") else "embedding"
         resp = supabase.table("system_documents").update(payload).eq("id", document["id"]).execute()
         rows, error = _supabase_response_data(resp)
         if not error and rows:

@@ -426,6 +426,11 @@ export default function ResearchWorkspace() {
   };
   const loadNotebookName = async () => { try { const result = await api.getNotebooks(token); const item = (result?.notebooks || []).find((n) => String(n.notebook_id) === String(notebookId)); if (item?.name) setNotebookName(item.name); } catch {} };
   useEffect(() => { loadNotebookName(); loadDocuments(); loadSessions(); return () => requestRef.current?.abort?.(); }, [token, notebookId]);
+  useEffect(() => {
+    if (!documents.some((doc) => !["ready", "failed"].includes(doc.processing_status))) return undefined;
+    const id = setInterval(() => { loadDocuments(); }, 2500);
+    return () => clearInterval(id);
+  }, [documents, token, notebookId]);
 
   const createSession = async () => { if (!selectedDocumentIds.length) return showToast("error", "Chọn ít nhất một tài liệu ready."); try { const result = await api.createResearchSession(notebookId, selectedDocumentIds, token); const session = result?.session; setSessions((prev) => [session, ...prev].filter(Boolean)); setMessages([]); setCurrentCitations([]); setDiagnostics(null); await openSession(session, false); showToast("success", "Đã tạo phiên mới."); } catch (err) { showToast("error", err.message || "Không thể tạo phiên."); } };
   const updateActiveSessionDocuments = async (nextIds) => {
@@ -449,7 +454,7 @@ export default function ResearchWorkspace() {
   };
   const handleUpload = async (files) => {
     setUploadError(""); const valid = files.filter((file) => { const ext = file.name.split(".").pop()?.toLowerCase(); if (!EXTENSIONS.has(ext)) { setUploadError(`Không hỗ trợ ${file.name}`); return false; } if (file.size > MAX_UPLOAD_BYTES) { setUploadError(`${file.name} vượt quá ${MAX_UPLOAD_MB}MB`); return false; } return true; }); if (!valid.length) return;
-    setUploadProgress(1); try { const result = await api.uploadDocuments(notebookId, valid, token, setUploadProgress); const uploaded = (result?.uploaded || []).map(normalizeDocument); showToast("success", "Upload hoàn tất."); await loadDocuments(); if (activeSession?.id && uploaded.length) { const next = [...new Set([...selectedDocumentIds, ...uploaded.filter((d) => d.processing_status === "ready").map((d) => d.id)])]; await updateActiveSessionDocuments(next); } } catch (err) { setUploadError(err.message || "Upload thất bại."); } finally { setTimeout(() => setUploadProgress(0), 800); }
+    setUploadProgress(1); try { const result = await api.uploadDocuments(notebookId, valid, token, setUploadProgress); const uploaded = (result?.uploaded || []).map(normalizeDocument); const queued = (result?.queued || []).map(normalizeDocument); showToast("success", queued.length ? "Upload xong, tài liệu đang được index nền." : "Upload hoàn tất."); await loadDocuments(); if (activeSession?.id && uploaded.length) { const next = [...new Set([...selectedDocumentIds, ...uploaded.filter((d) => d.processing_status === "ready").map((d) => d.id)])]; await updateActiveSessionDocuments(next); } } catch (err) { setUploadError(err.message || "Upload thất bại."); } finally { setTimeout(() => setUploadProgress(0), 800); }
   };
   const searchLibrary = async () => { setLibraryLoading(true); try { const result = await api.listSystemLibraryDocuments({ q: libraryQuery, search: libraryQuery, limit: 12 }, token); setLibraryResults(result?.documents || result?.items || []); } catch (err) { showToast("error", err.message || "Không thể tìm thư viện."); } finally { setLibraryLoading(false); } };
   const linkLibraryDocument = async (id) => { try { await api.linkSystemDocumentToNotebook(notebookId, id, token); setLibraryOpen(false); showToast("success", "Đã link tài liệu từ thư viện."); await loadDocuments(); } catch (err) { showToast("error", err.message || "Không thể link tài liệu."); } };
