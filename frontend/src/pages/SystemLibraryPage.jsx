@@ -49,6 +49,9 @@ const STYLES = `
   .sl-hero__stats, .sl-tabs, .sl-paper-search { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
   .sl-tab, .sl-stat { padding: 11px 14px; border-radius: 16px; background: rgba(0,0,0,0.18); border: 1px solid rgba(255,255,255,0.07); color: #bfb4a3; font-size: 12px; cursor: pointer; }
   .sl-tab.is-active { color: #1a130c; background: #d4b66f; font-weight: 800; }
+  .sl-section-tabs { display:flex; flex-wrap:wrap; gap:10px; margin-top:22px; padding:8px; border:1px solid rgba(255,255,255,.08); border-radius:22px; background:rgba(0,0,0,.18); width:fit-content; max-width:100%; }
+  .sl-section-tab { border:1px solid transparent; border-radius:16px; padding:11px 16px; display:inline-flex; align-items:center; justify-content:center; gap:8px; background:transparent; color:#bfb4a3; font-weight:800; cursor:pointer; }
+  .sl-section-tab.is-active { background:linear-gradient(135deg,#d4b66f,#8a6a30); color:#18130d; box-shadow:0 14px 32px rgba(212,182,111,.2); }
   .sl-stat strong { color: #f0d089; font-size: 18px; margin-right: 6px; }
   .sl-search, .sl-paper-search { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 10px; border-radius: 20px; background: rgba(8,7,5,0.74); border: 1px solid rgba(255,255,255,0.09); }
   .sl-search { margin-top: 24px; }
@@ -208,6 +211,7 @@ const canPublish = (user) =>
 export default function SystemLibraryPage() {
   const { token, user } = useAuth();
   const [activeTab, setActiveTab] = useState("community");
+  const [contentTab, setContentTab] = useState("library");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [filters, setFilters] = useState(emptyFilters);
@@ -502,6 +506,7 @@ export default function SystemLibraryPage() {
           : "Đã upload tài liệu vào Thư viện cộng đồng.",
       );
       setActiveTab("my");
+      setContentTab("library");
       await fetchDocuments();
     } catch (err) {
       setNotice(err.message || "Không thể upload tài liệu.");
@@ -543,6 +548,7 @@ export default function SystemLibraryPage() {
       const result = await api.importInternetPaperToLibrary(paper, token);
       setNotice(result?.document?.duplicate ? "Paper đã tồn tại theo DOI/URL; không tạo bản trùng." : "Đã import paper vào thư viện.");
       setActiveTab("community");
+      setContentTab("library");
       await fetchDocuments();
     } catch (err) {
       setNotice(err.message || "Không thể import paper vào thư viện.");
@@ -633,6 +639,24 @@ export default function SystemLibraryPage() {
           </span>
         </div>
         {activeTab !== "internet" && (
+          <div className="sl-section-tabs" role="tablist" aria-label="Chế độ thư viện">
+            <button
+              type="button"
+              className={`sl-section-tab ${contentTab === "library" ? "is-active" : ""}`}
+              onClick={() => setContentTab("library")}
+            >
+              <Library size={16} /> {activeTab === "my" ? "Thư viện của tôi" : "Thư viện cộng đồng"}
+            </button>
+            <button
+              type="button"
+              className={`sl-section-tab ${contentTab === "upload" ? "is-active" : ""}`}
+              onClick={() => setContentTab("upload")}
+            >
+              <Upload size={16} /> Upload
+            </button>
+          </div>
+        )}
+        {activeTab !== "internet" && contentTab === "library" && (
           <SystemLibrarySearchBar
             value={query}
             onChange={setQuery}
@@ -699,6 +723,7 @@ export default function SystemLibraryPage() {
         </section>
       ) : (
         <>
+          {contentTab === "upload" && (
           <section className="sl-upload-panel" style={{ marginTop: 22 }}>
             <h2>
               <Upload size={20} /> Đóng góp tài liệu cho Thư viện Cộng đồng
@@ -859,8 +884,9 @@ export default function SystemLibraryPage() {
               </aside>
             </div>
           </section>
+          )}
 
-          {activeTab === "my" && (
+          {contentTab === "library" && activeTab === "my" && (
             <section className="sl-my-dashboard" aria-label="Dashboard tài liệu của tôi">
               {[
                 ["Đã public", documents.filter((doc) => doc.review_status === "published").length],
@@ -872,6 +898,7 @@ export default function SystemLibraryPage() {
               ))}
             </section>
           )}
+          {contentTab === "library" && (
           <div className="sl-body">
             <SystemLibraryFilters
               filters={filters}
@@ -979,6 +1006,7 @@ export default function SystemLibraryPage() {
               )}
             </section>
           </div>
+          )}
         </>
       )}
       <SystemDocumentDetailModal
