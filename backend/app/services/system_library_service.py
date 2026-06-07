@@ -134,6 +134,20 @@ def _is_missing_column_error(exc_or_error: Any) -> bool:
     return any(token in message for token in ["column", "schema cache", "could not find", "does not exist"])
 
 
+def _is_range_not_satisfiable_error(exc_or_error: Any) -> bool:
+    message = str(exc_or_error or "").lower()
+    code = ""
+    if isinstance(exc_or_error, dict):
+        code = str(exc_or_error.get("code") or "").lower()
+    else:
+        code = str(getattr(exc_or_error, "code", "") or "").lower()
+    return code == "pgrst103" or "pgrst103" in message or "requested range not satisfiable" in message
+
+
+def _empty_document_page(page: int, page_size: int) -> dict:
+    return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
+
+
 def _get_user_id(user: dict) -> str:
     user_id = user.get("id") or user.get("user_id")
     if not user_id:
@@ -1087,27 +1101,47 @@ async def list_or_search_documents(user: dict, query_text: str = "", filters: di
         return query.range(offset, offset + page_size - 1)
 
     if bookmarked_only and not bookmarked_ids:
-        return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
+        return _empty_document_page(page, page_size)
 
     try:
         resp = build_query(SYSTEM_DOCUMENT_COLUMNS).execute()
     except Exception as exc:
+        if _is_range_not_satisfiable_error(exc):
+            logger.info("System library page range is out of bounds (page=%s, page_size=%s): %s", page, page_size, exc)
+            return _empty_document_page(page, page_size)
         if _is_missing_table_error(exc):
-            return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
+            return _empty_document_page(page, page_size)
         if _is_missing_column_error(exc):
-            resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            try:
+                resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            except Exception as fallback_exc:
+                if _is_range_not_satisfiable_error(fallback_exc):
+                    logger.info("System library fallback page range is out of bounds (page=%s, page_size=%s): %s", page, page_size, fallback_exc)
+                    return _empty_document_page(page, page_size)
+                raise
         else:
             logger.exception("List system documents failed")
             raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"}) from exc
 
     rows, error = _supabase_response_data(resp)
     if error:
+        if _is_range_not_satisfiable_error(error):
+            logger.info("System library page range is out of bounds (page=%s, page_size=%s): %s", page, page_size, error)
+            return _empty_document_page(page, page_size)
         if _is_missing_table_error(error):
-            return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
+            return _empty_document_page(page, page_size)
         if _is_missing_column_error(error):
-            resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            try:
+                resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            except Exception as fallback_exc:
+                if _is_range_not_satisfiable_error(fallback_exc):
+                    logger.info("System library fallback page range is out of bounds (page=%s, page_size=%s): %s", page, page_size, fallback_exc)
+                    return _empty_document_page(page, page_size)
+                raise
             rows, error = _supabase_response_data(resp)
         if error:
+            if _is_range_not_satisfiable_error(error):
+                return _empty_document_page(page, page_size)
             raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"})
 
     rows = rows or []
