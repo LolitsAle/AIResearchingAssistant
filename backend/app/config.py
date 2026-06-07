@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
     # Required for Academic Lens vision and scanned-PDF OCR. Keep empty unless configured in .env.
     VISION_MODEL: str = ""
+    ENABLE_PDF_VISION_FALLBACK: bool = False
+    ENABLE_ADVANCED_TABLE_EXTRACTION: bool = False
+    ENABLE_MATH_OCR: bool = False
+    MATH_OCR_PROVIDER: str = "none"
+    MATHPIX_APP_ID: str = ""
+    MATHPIX_APP_KEY: str = ""
     GROQ_API_KEY: str = ""
     GROQ_FLASHCARD_MODEL: str = "llama-3.1-8b-instant"
     WEB_SEARCH_PROVIDER: str = "duckduckgo"
@@ -37,7 +43,13 @@ class Settings(BaseSettings):
 
     # Indexing
     BACKGROUND_INDEXING_ENABLED: bool = True
-    INDEX_INSERT_BATCH_SIZE: int = 250
+    INDEX_INSERT_BATCH_SIZE: int = 50
+    SUPABASE_VECTOR_INSERT_BATCH_SIZE: int = 25
+    SUPABASE_REQUEST_TIMEOUT_SECONDS: int = 240
+    SUPABASE_STORAGE_TIMEOUT_SECONDS: int = 240
+    SUPABASE_FUNCTION_TIMEOUT_SECONDS: int = 60
+    SUPABASE_RETRY_ATTEMPTS: int = 4
+    SUPABASE_RETRY_BASE_DELAY_SECONDS: float = 2.0
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_BATCH_SIZE: int = 100
     EMBEDDING_MAX_CONCURRENCY: int = 3
@@ -103,6 +115,10 @@ class Settings(BaseSettings):
         self.EMBEDDING_MAX_CONCURRENCY = raw_concurrency
         self.EMBEDDING_CONCURRENCY = raw_concurrency
         self.EMBEDDING_BATCH_SIZE = max(1, min(int(self.EMBEDDING_BATCH_SIZE or 100), 100))
+        self.INDEX_INSERT_BATCH_SIZE = max(1, min(int(self.INDEX_INSERT_BATCH_SIZE or 50), 100))
+        self.SUPABASE_VECTOR_INSERT_BATCH_SIZE = max(1, min(int(self.SUPABASE_VECTOR_INSERT_BATCH_SIZE or 25), 50))
+        self.SUPABASE_RETRY_ATTEMPTS = max(1, min(int(self.SUPABASE_RETRY_ATTEMPTS or 4), 8))
+        self.SUPABASE_RETRY_BASE_DELAY_SECONDS = max(0.1, min(float(self.SUPABASE_RETRY_BASE_DELAY_SECONDS or 2.0), 30.0))
         self.VISION_MODEL = str(self.VISION_MODEL or "").strip()
         return self
 
