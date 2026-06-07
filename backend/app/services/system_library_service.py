@@ -16,6 +16,7 @@ from fastapi import HTTPException, status
 
 from app.config import settings
 from app.db.supabase_client import supabase
+from app.db.supabase_retry import execute_supabase_with_retry
 from app.services.chunker import chunk_text
 from app.services.document_parser import EmptyDocumentText, UnsupportedDocumentType, parse_document
 from app.services.document_structure_service import normalize_plain_text, page_blocks
@@ -668,12 +669,12 @@ async def _replace_system_document_structure(document_id: str, pages: list[dict]
 
     def _call() -> None:
         try:
-            supabase.table("system_document_pages").delete().eq("document_id", document_id).execute()
-            supabase.table("system_document_blocks").delete().eq("document_id", document_id).execute()
+            execute_supabase_with_retry(lambda: supabase.table("system_document_pages").delete().eq("document_id", document_id).execute(), label=f"delete system_document_pages document_id={document_id}")
+            execute_supabase_with_retry(lambda: supabase.table("system_document_blocks").delete().eq("document_id", document_id).execute(), label=f"delete system_document_blocks document_id={document_id}")
             for start in range(0, len(page_rows), batch_size):
-                supabase.table("system_document_pages").insert(page_rows[start : start + batch_size]).execute()
+                execute_supabase_with_retry(lambda batch=page_rows[start : start + batch_size]: supabase.table("system_document_pages").insert(batch).execute(), label=f"insert system_document_pages document_id={document_id}")
             for start in range(0, len(block_rows), batch_size):
-                supabase.table("system_document_blocks").insert(block_rows[start : start + batch_size]).execute()
+                execute_supabase_with_retry(lambda batch=block_rows[start : start + batch_size]: supabase.table("system_document_blocks").insert(batch).execute(), label=f"insert system_document_blocks document_id={document_id}")
         except Exception as exc:
             logger.warning("Structured system document persist skipped for %s: %s", document_id, exc)
 
@@ -701,21 +702,21 @@ async def _finalize_system_document_vectors(document_id: str, chunks: list[dict]
         }
         for index in range(len(chunks))
     ]
-    batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
+    batch_size = max(1, int(getattr(settings, "SUPABASE_VECTOR_INSERT_BATCH_SIZE", getattr(settings, "INDEX_INSERT_BATCH_SIZE", 25)) or 25))
 
     def _insert_batches() -> None:
-        supabase.table("system_document_chunks").delete().eq("document_id", document_id).execute()
+        execute_supabase_with_retry(lambda: supabase.table("system_document_chunks").delete().eq("document_id", document_id).execute(), label=f"delete system_document_chunks document_id={document_id}")
         for start in range(0, len(chunk_rows), batch_size):
             batch = chunk_rows[start : start + batch_size]
             try:
-                supabase.table("system_document_chunks").insert(batch).execute()
+                execute_supabase_with_retry(lambda: supabase.table("system_document_chunks").insert(batch).execute(), label=f"insert system_document_chunks document_id={document_id}")
             except Exception as exc:
                 legacy_batch = [
                     {key: row[key] for key in ("document_id", "content", "page_start", "page_end", "embedding") if key in row}
                     for row in batch
                 ]
                 logger.warning("Extended system chunk metadata insert failed; retrying legacy columns: %s", exc)
-                supabase.table("system_document_chunks").insert(legacy_batch).execute()
+                execute_supabase_with_retry(lambda: supabase.table("system_document_chunks").insert(legacy_batch).execute(), label=f"insert legacy system_document_chunks document_id={document_id}")
 
     await report_indexing_progress(job_id, stage="inserting", progress=88, message="Đang lưu vector thư viện")
     await asyncio.to_thread(_insert_batches)
