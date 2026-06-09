@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from typing import Any, Literal
+from urllib.parse import quote
 from uuid import uuid4
 import logging
+
+import httpx
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from supabase import Client, create_client
@@ -219,22 +222,101 @@ def _storage_error_detail(exc: Exception) -> str:
     return " | ".join(part for part in parts if part)
 
 
-def _ensure_public_avatar_bucket(bucket: str) -> None:
-    """Best-effort guard for local/dev projects that have not run the SQL setup yet."""
+def _supabase_project_url() -> str:
+    """Return the project origin even if SUPABASE_URL was configured with an API suffix."""
+    url = str(settings.SUPABASE_URL or "").strip().rstrip("/")
+    for suffix in ("/rest/v1", "/storage/v1", "/auth/v1"):
+        if url.endswith(suffix):
+            url = url[: -len(suffix)]
+    return url
+
+
+def _storage_service_key() -> str:
+    key = str(settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_SERVICE_KEY or "").strip()
+    if not key:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "SUPABASE_SERVICE_KEY_MISSING", "message": "Backend chưa cấu hình SUPABASE_SERVICE_ROLE_KEY."},
+        )
+    return key
+
+
+def _storage_auth_headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    key = _storage_service_key()
+    headers = {"apikey": key, "authorization": f"Bearer {key}"}
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _storage_response_detail(response: httpx.Response) -> str:
     try:
-        bucket_info = supabase.storage.get_bucket(bucket)
-        is_public = bool(getattr(bucket_info, "public", False) or (isinstance(bucket_info, dict) and bucket_info.get("public")))
-        if not is_public:
-            supabase.storage.update_bucket(bucket, {"public": True})
+        payload = response.json()
+    except ValueError:
+        payload = response.text
+    return f"{response.status_code} {payload}"
+
+
+def _storage_url(path: str) -> str:
+    return f"{_supabase_project_url()}/storage/v1{path}"
+
+
+def _ensure_public_avatar_bucket(bucket: str) -> None:
+    """Best-effort guard for local/dev projects that have not run the SQL setup yet.
+
+    This uses the Storage REST endpoint directly instead of storage3 because some
+    local environments reported storage3 building `/rest/v1/object/...` URLs for
+    uploads, which causes a misleading 404 before the request reaches Storage.
+    """
+    quoted_bucket = quote(bucket, safe="")
+    try:
+        with httpx.Client(timeout=float(settings.SUPABASE_STORAGE_TIMEOUT_SECONDS)) as client:
+            response = client.get(_storage_url(f"/bucket/{quoted_bucket}"), headers=_storage_auth_headers())
+            if response.status_code == 404:
+                create_response = client.post(
+                    _storage_url("/bucket"),
+                    headers=_storage_auth_headers({"content-type": "application/json"}),
+                    json={"id": bucket, "name": bucket, "public": True},
+                )
+                if create_response.status_code >= 400 and create_response.status_code != 409:
+                    logger.warning("Could not auto-create avatar bucket %s: %s", bucket, _storage_response_detail(create_response))
+                return
+            if response.status_code >= 400:
+                logger.warning("Could not inspect avatar bucket %s: %s", bucket, _storage_response_detail(response))
+                return
+
+            bucket_info = response.json() or {}
+            if not bool(bucket_info.get("public")):
+                update_response = client.put(
+                    _storage_url(f"/bucket/{quoted_bucket}"),
+                    headers=_storage_auth_headers({"content-type": "application/json"}),
+                    json={"public": True},
+                )
+                if update_response.status_code >= 400:
+                    logger.warning("Could not make avatar bucket %s public: %s", bucket, _storage_response_detail(update_response))
+    except HTTPException:
+        raise
     except Exception as exc:
-        detail = _storage_error_detail(exc).lower()
-        if "not found" not in detail and "404" not in detail:
-            logger.warning("Could not inspect/update avatar bucket %s: %s", bucket, _storage_error_detail(exc))
-            return
-        try:
-            supabase.storage.create_bucket(bucket, options={"public": True})
-        except Exception as create_exc:
-            logger.warning("Could not auto-create avatar bucket %s: %s", bucket, _storage_error_detail(create_exc))
+        logger.warning("Could not inspect/update avatar bucket %s: %s", bucket, _storage_error_detail(exc))
+
+
+def _avatar_public_url(bucket: str, path: str) -> str:
+    return f"{_supabase_project_url()}/storage/v1/object/public/{quote(bucket, safe='')}/{quote(path, safe='/')}"
+
+
+def _upload_avatar_file(bucket: str, path: str, content: bytes, content_type: str) -> str:
+    quoted_bucket = quote(bucket, safe="")
+    quoted_path = quote(path, safe="/")
+    filename = path.rsplit("/", maxsplit=1)[-1]
+    with httpx.Client(timeout=float(settings.SUPABASE_STORAGE_TIMEOUT_SECONDS)) as client:
+        response = client.post(
+            _storage_url(f"/object/{quoted_bucket}/{quoted_path}"),
+            headers=_storage_auth_headers({"x-upsert": "true"}),
+            files={"file": (filename, content, content_type)},
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(_storage_response_detail(response))
+    return _avatar_public_url(bucket, path)
 
 
 @router.post("/avatar")
@@ -253,8 +335,7 @@ async def upload_avatar(avatar: UploadFile = File(...), user: dict = Depends(get
     path = f"{_user_id(user)}/avatar-{uuid4().hex}.{ext}"
     _ensure_public_avatar_bucket(bucket)
     try:
-        supabase.storage.from_(bucket).upload(path, content, {"content-type": avatar.content_type, "upsert": "true"})
-        public_url = supabase.storage.from_(bucket).get_public_url(path)
+        public_url = _upload_avatar_file(bucket, path, content, avatar.content_type)
     except Exception as exc:
         detail = _storage_error_detail(exc)
         logger.exception("Avatar upload failed for user_id=%s bucket=%s path=%s detail=%s", _user_id(user), bucket, path, detail)
