@@ -161,7 +161,7 @@ Chạy đúng **một lần** file [`docs/sql/complete_schema.sql`](./docs/sql/c
 - Structured extraction: `document_pages`, `document_blocks`, `system_document_pages`, `system_document_blocks` và metadata chunk mở rộng.
 - Durable jobs: `indexing_jobs` và `generation_jobs`.
 - API/RLS: grants + RLS policies phù hợp cả khi Supabase bật **Automatically expose new tables** và **Enable automatic RLS**.
-- Storage buckets private: `notebook-sources`, `system-documents`, `avatars`.
+- Storage buckets: `notebook-sources` và `system-documents` private, `avatars` public để ảnh profile hiển thị được bằng public URL.
 
 ## Tài liệu liên quan
 

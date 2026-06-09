@@ -716,8 +716,10 @@ insert into storage.buckets (id, name, public)
 values
   ('notebook-sources', 'notebook-sources', false),
   ('system-documents', 'system-documents', false),
-  ('avatars', 'avatars', false)
-on conflict (id) do nothing;
+  ('avatars', 'avatars', true)
+on conflict (id) do update set
+  name = excluded.name,
+  public = excluded.public;
 
 -- -----------------------------------------------------------------------------
 -- Grants and RLS policies

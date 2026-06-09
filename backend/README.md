@@ -147,12 +147,12 @@ app/
 ## Supabase cần chuẩn bị
 
 - Chạy đúng **một lần** `../docs/sql/complete_schema.sql` trong Supabase SQL Editor trên project mới.
-- File này tự bật extension `vector`, tạo toàn bộ bảng core/system library/Academic Lens/jobs, tạo RPC `match_chunks` và `match_system_documents`, cấp grants, bật RLS policies, và tạo các private storage buckets.
+- File này tự bật extension `vector`, tạo toàn bộ bảng core/system library/Academic Lens/jobs, tạo RPC `match_chunks` và `match_system_documents`, cấp grants, bật RLS policies, và tạo storage buckets (`avatars` public, các bucket tài liệu private).
 - Schema đã bao gồm `public.notebooks`, `public.documents`, `public.document_chunks`, `public.notes`; không cần chạy thêm các file SQL rời.
 
 ## Supabase Storage buckets
 
-`../docs/sql/complete_schema.sql` creates these **private** buckets when run with admin/service-role privileges:
+`../docs/sql/complete_schema.sql` creates these buckets (`avatars` public; document buckets private) when run with admin/service-role privileges:
 
 - `NOTEBOOK_STORAGE_BUCKET` / `INDEXING_STORAGE_BUCKET` (example: `notebook-sources`): durable source files for Research Workspace notebook indexing.
 - `SYSTEM_LIBRARY_STORAGE_BUCKET` (example: `system-documents`): original files for curated/system library documents.
