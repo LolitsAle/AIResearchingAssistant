@@ -14,7 +14,7 @@ from supabase import Client, create_client
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.db.supabase_client import supabase
+from app.db.supabase_client import supabase, supabase_project_url
 from app.dependencies import get_current_user
 from app.services.google_auth_service import verify_google_credential
 
@@ -222,15 +222,6 @@ def _storage_error_detail(exc: Exception) -> str:
     return " | ".join(part for part in parts if part)
 
 
-def _supabase_project_url() -> str:
-    """Return the project origin even if SUPABASE_URL was configured with an API suffix."""
-    url = str(settings.SUPABASE_URL or "").strip().rstrip("/")
-    for suffix in ("/rest/v1", "/storage/v1", "/auth/v1"):
-        if url.endswith(suffix):
-            url = url[: -len(suffix)]
-    return url
-
-
 def _storage_service_key() -> str:
     key = str(settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_SERVICE_KEY or "").strip()
     if not key:
@@ -258,7 +249,7 @@ def _storage_response_detail(response: httpx.Response) -> str:
 
 
 def _storage_url(path: str) -> str:
-    return f"{_supabase_project_url()}/storage/v1{path}"
+    return f"{supabase_project_url()}/storage/v1{path}"
 
 
 def _ensure_public_avatar_bucket(bucket: str) -> None:
@@ -301,7 +292,7 @@ def _ensure_public_avatar_bucket(bucket: str) -> None:
 
 
 def _avatar_public_url(bucket: str, path: str) -> str:
-    return f"{_supabase_project_url()}/storage/v1/object/public/{quote(bucket, safe='')}/{quote(path, safe='/')}"
+    return f"{supabase_project_url()}/storage/v1/object/public/{quote(bucket, safe='')}/{quote(path, safe='/')}"
 
 
 def _upload_avatar_file(bucket: str, path: str, content: bytes, content_type: str) -> str:

@@ -904,3 +904,6 @@ end $$;
 
 -- No anon/authenticated policies are intentionally created for password_reset_otps,
 -- indexing_jobs, or generation_jobs. They stay service-role only.
+
+-- Refresh PostgREST/Supabase API schema cache so newly-created tables are routable immediately.
+select pg_notify('pgrst', 'reload schema');
